@@ -9870,6 +9870,47 @@ def test_fetch_instagram_insights_includes_trends_and_unsupported_monetization(m
     assert result["monetization"]["available"] is False
 
 
+def test_fetch_instagram_insights_uses_instagram_login_host(monkeypatch):
+    # Regression test: a token from the Instagram Login direct flow (the
+    # only Instagram auth flow this app offers -- see PLATFORM_CONFIG and
+    # _publish_instagram_container) isn't a Facebook Page token, so
+    # graph.facebook.com silently answers insights/profile requests with
+    # empty data instead of a 401/403. That previously made the dashboard
+    # show all-zero metrics with no visible error, and Meta's own API-usage
+    # dashboard recorded zero calls for instagram_business_manage_insights
+    # because the calls never actually reached graph.instagram.com.
+    app = _import_app_with_stubs(monkeypatch)
+    requested_urls = []
+
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, url, params=None):
+            requested_urls.append(url)
+            request = app.httpx.Request("GET", url)
+            if url.endswith("/insights"):
+                return app.httpx.Response(200, json={"data": []}, request=request)
+            return app.httpx.Response(200, json={"followers_count": 10}, request=request)
+
+    monkeypatch.setattr(app.httpx, "AsyncClient", _FakeAsyncClient)
+
+    asyncio.run(app._fetch_instagram_insights(
+        "token-1", "ig-1", "2026-09-08T00:00:00+00:00", "2026-09-10T00:00:00+00:00",
+    ))
+
+    assert requested_urls
+    for url in requested_urls:
+        assert url.startswith("https://graph.instagram.com/")
+        assert "graph.facebook.com" not in url
+
+
 def test_fetch_youtube_analytics_parses_rows(monkeypatch):
     app = _import_app_with_stubs(monkeypatch)
 

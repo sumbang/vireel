@@ -18947,9 +18947,17 @@ def _parse_instagram_insights_metrics(metric_entries: List[Dict[str, Any]]) -> T
 async def _request_instagram_insights_metrics(
     access_token: str, ig_user_id: str, metrics: Tuple[str, ...], since_unix: int, until_unix: int,
 ) -> List[Dict[str, Any]]:
+    # Instagram Login direct -> graph.instagram.com, same as
+    # _publish_instagram_container/_fetch_instagram_followers_count. A token
+    # from this flow isn't a Facebook Page token, so graph.facebook.com
+    # silently answers with an empty "data": [] instead of a 401/403 --
+    # Meta's own API-usage dashboard then shows 0 calls attributed to
+    # instagram_business_manage_insights, and this endpoint's caller
+    # (_fetch_instagram_reach_insights) reads that empty list as "all
+    # metrics are 0" rather than as an error.
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.get(
-            f"https://graph.facebook.com/v19.0/{ig_user_id}/insights",
+            f"https://graph.instagram.com/v19.0/{ig_user_id}/insights",
             params={
                 "metric": ",".join(metrics),
                 "period": "day",
@@ -19016,7 +19024,7 @@ async def _fetch_instagram_followers_count(access_token: str, ig_user_id: str) -
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(
-                f"https://graph.facebook.com/v19.0/{ig_user_id}",
+                f"https://graph.instagram.com/v19.0/{ig_user_id}",  # Instagram Login direct
                 params={"fields": "followers_count,media_count", "access_token": access_token},
             )
         if response.status_code in (401, 403):

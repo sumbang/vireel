@@ -7,6 +7,7 @@ import {
     Linkedin,
     Loader2,
     Minus,
+    RefreshCw,
     Twitch,
     TrendingDown,
     TrendingUp,
@@ -28,8 +29,8 @@ import { getApiUrl } from "../../config";
 import { getAuthHeaders } from "../../lib/apiAuth";
 import { useTranslation } from "../../state/LanguageContext";
 
-const INSIGHTS_PLATFORMS = ["facebook", "instagram", "youtube"];
-const COMING_SOON_PLATFORMS = ["linkedin", "tiktok"];
+const INSIGHTS_PLATFORMS = ["facebook", "instagram", "youtube", "tiktok"];
+const COMING_SOON_PLATFORMS = ["linkedin"];
 
 const PLATFORM_ICONS = { facebook: Facebook, instagram: Instagram, youtube: Youtube, linkedin: Linkedin, tiktok: Twitch };
 const PLATFORM_LABELS = { facebook: "Facebook", instagram: "Instagram", youtube: "YouTube", linkedin: "LinkedIn", tiktok: "TikTok" };
@@ -167,6 +168,28 @@ async function fetchInsights(userId, accountId, range) {
     return response.json();
 }
 
+async function refreshInsights(userId, accountId) {
+    const response = await fetch(getApiUrl(`/api/social/insights/refresh?account_id=${accountId}`), {
+        method: "POST",
+        headers: getAuthHeaders(userId),
+    });
+    if (!response.ok) {
+        const detail = await response.json().catch(() => null);
+        throw new Error(detail?.detail || "Unable to refresh insights");
+    }
+    return response.json();
+}
+
+function formatLastSynced(isoString, t) {
+    if (!isoString) return null;
+    const date = new Date(isoString);
+    if (Number.isNaN(date.getTime())) return null;
+    return t("dashboard.analyticsLastSynced", "Mis a jour {time}").replace(
+        "{time}",
+        date.toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" })
+    );
+}
+
 function ComingSoonCard({ platform, t }) {
     const Icon = PLATFORM_ICONS[platform];
     return (
@@ -210,7 +233,24 @@ function AccountPicker({ accounts, selectedId, onSelect }) {
     );
 }
 
-function AccountInsightsCard({ insights, loading, t }) {
+function RefreshInsightsButton({ onRefresh, refreshing, lastSyncedLabel, t }) {
+    return (
+        <div className="flex items-center justify-end gap-2 text-xs text-slate-500 dark:text-zinc-400">
+            {lastSyncedLabel ? <span>{lastSyncedLabel}</span> : null}
+            <button
+                type="button"
+                onClick={onRefresh}
+                disabled={refreshing}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-slate-300 dark:border-white/10 font-semibold text-slate-600 dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-white/5 disabled:opacity-50"
+            >
+                <RefreshCw size={12} className={refreshing ? "animate-spin" : ""} />
+                {t("dashboard.analyticsRefresh", "Actualiser")}
+            </button>
+        </div>
+    );
+}
+
+function AccountInsightsCard({ insights, loading, refreshing, refreshError, onRefresh, t }) {
     const availableMetrics = useMemo(() => {
         if (!insights?.metrics) return [];
         return METRIC_DEFS.filter((def) => insights.metrics[def.key] !== null && insights.metrics[def.key] !== undefined);
@@ -239,19 +279,31 @@ function AccountInsightsCard({ insights, loading, t }) {
 
     if (!insights) return null;
 
+    const lastSyncedLabel = formatLastSynced(insights.last_synced_at, t);
+
     if (insights.error) {
         return (
-            <div className={`${CARD_CLASS} p-4 flex items-start gap-2`}>
-                <AlertTriangle size={16} className="text-amber-500 mt-0.5 shrink-0" />
-                <p className="text-sm text-amber-600 dark:text-amber-400">
-                    {t("dashboard.analyticsAccountError", "Impossible de recuperer les statistiques (reconnectez ce compte dans Parametres).")}
-                </p>
+            <div className="space-y-2">
+                <RefreshInsightsButton onRefresh={onRefresh} refreshing={refreshing} lastSyncedLabel={lastSyncedLabel} t={t} />
+                <div className={`${CARD_CLASS} p-4 flex items-start gap-2`}>
+                    <AlertTriangle size={16} className="text-amber-500 mt-0.5 shrink-0" />
+                    <p className="text-sm text-amber-600 dark:text-amber-400">
+                        {t("dashboard.analyticsAccountError", "Impossible de recuperer les statistiques (reconnectez ce compte dans Parametres).")}
+                    </p>
+                </div>
             </div>
         );
     }
 
     return (
         <div className="space-y-4">
+            <div className="space-y-1">
+                <RefreshInsightsButton onRefresh={onRefresh} refreshing={refreshing} lastSyncedLabel={lastSyncedLabel} t={t} />
+                {refreshError ? (
+                    <p className="text-right text-xs text-amber-600 dark:text-amber-400">{refreshError}</p>
+                ) : null}
+            </div>
+
             {availableMetrics.length > 0 && (
                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                     {availableMetrics.map((def) => {
@@ -316,6 +368,8 @@ function AnalyticsBody({ range, t }) {
     const [selectedAccountId, setSelectedAccountId] = useState("");
     const [insightsByAccount, setInsightsByAccount] = useState({});
     const [insightsLoading, setInsightsLoading] = useState(false);
+    const [refreshingAccountId, setRefreshingAccountId] = useState("");
+    const [refreshErrorsByAccount, setRefreshErrorsByAccount] = useState({});
 
     useEffect(() => {
         if (!user?.id) return undefined;
@@ -373,6 +427,24 @@ function AnalyticsBody({ range, t }) {
         };
     }, [user?.id, selectedAccountId, range]);
 
+    const handleRefresh = async () => {
+        if (!user?.id || !selectedAccountId) return;
+        setRefreshingAccountId(selectedAccountId);
+        setRefreshErrorsByAccount((prev) => ({ ...prev, [selectedAccountId]: "" }));
+        try {
+            await refreshInsights(user.id, selectedAccountId);
+            const data = await fetchInsights(user.id, selectedAccountId, range);
+            setInsightsByAccount((prev) => ({ ...prev, [selectedAccountId]: data }));
+        } catch (err) {
+            setRefreshErrorsByAccount((prev) => ({
+                ...prev,
+                [selectedAccountId]: err.message || t("dashboard.analyticsRefreshFailed", "Actualisation impossible."),
+            }));
+        } finally {
+            setRefreshingAccountId("");
+        }
+    };
+
     if (accountsLoading) {
         return (
             <div className="flex items-center justify-center h-40">
@@ -402,6 +474,9 @@ function AnalyticsBody({ range, t }) {
                         <AccountInsightsCard
                             insights={insightsByAccount[selectedAccountId]}
                             loading={insightsLoading}
+                            refreshing={refreshingAccountId === selectedAccountId}
+                            refreshError={refreshErrorsByAccount[selectedAccountId]}
+                            onRefresh={handleRefresh}
                             t={t}
                         />
                     )}

@@ -29,8 +29,8 @@ import { getApiUrl } from "../../config";
 import { getAuthHeaders } from "../../lib/apiAuth";
 import { useTranslation } from "../../state/LanguageContext";
 
-const INSIGHTS_PLATFORMS = ["facebook", "instagram", "youtube", "tiktok"];
-const COMING_SOON_PLATFORMS = ["linkedin"];
+const INSIGHTS_PLATFORMS = ["facebook", "instagram", "youtube", "tiktok", "linkedin"];
+const COMING_SOON_PLATFORMS = [];
 
 const PLATFORM_ICONS = { facebook: Facebook, instagram: Instagram, youtube: Youtube, linkedin: Linkedin, tiktok: Twitch };
 const PLATFORM_LABELS = { facebook: "Facebook", instagram: "Instagram", youtube: "YouTube", linkedin: "LinkedIn", tiktok: "TikTok" };
@@ -463,7 +463,7 @@ function AnalyticsBody({ range, t }) {
         <div className="space-y-4">
             {insightAccounts.length === 0 && comingSoonAccounts.length === 0 ? (
                 <div className={`${CARD_CLASS} p-8 text-center text-sm text-slate-500 dark:text-zinc-400`}>
-                    {t("dashboard.analyticsNoAccount", "Connectez une page Facebook, un compte Instagram ou une chaine YouTube dans Parametres pour voir vos analyses.")}
+                    {t("dashboard.analyticsNoAccount", "Connectez un reseau social dans Parametres pour voir vos analyses.")}
                 </div>
             ) : null}
 

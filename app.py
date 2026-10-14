@@ -429,14 +429,15 @@ PLATFORM_CONFIG = {
         "token_url": "https://www.linkedin.com/oauth/v2/accessToken",
         "client_id": os.getenv("LINKEDIN_CLIENT_ID"),
         "client_secret": os.getenv("LINKEDIN_CLIENT_SECRET"),
-        # No analytics scope is requested here: real LinkedIn analytics
-        # (page/post insights) require the LinkedIn Marketing Developer
-        # Platform, a separate partner/developer approval process that
-        # cannot be obtained by writing code -- see
-        # _get_social_insights_for_account, which reports this platform as
-        # unsupported for the analytics feature rather than silently
-        # returning nothing.
-        "scopes": ["w_member_social", "openid", "profile","email"],
+        # r_member_postAnalytics (LinkedIn's Community Management API,
+        # launched mid-2025) is requested for this app's own personal-
+        # profile publishing feature's analytics -- this app has no
+        # company-Page connection flow at all (every publish/comment call
+        # builds urn:li:person:..., never urn:li:organization:...), so
+        # r_organization_social and friends are deliberately NOT requested
+        # here: there is no real use case to demonstrate for them. See
+        # _fetch_linkedin_insights.
+        "scopes": ["w_member_social", "openid", "profile", "email", "r_member_postAnalytics"],
     },
     "facebook": {
         "auth_url": "https://www.facebook.com/v19.0/dialog/oauth",
@@ -515,7 +516,7 @@ PLATFORM_CONFIG = {
         # Display API scopes for basic analytics -- unlike what an earlier
         # version of this comment assumed, they do NOT require the
         # separate TikTok Business API partner program. See
-        # _fetch_tiktok_insights / _get_social_insights_for_account.
+        # _fetch_tiktok_insights.
         "scopes": ["video.upload", "user.info.basic", "user.info.stats", "video.list"],
     },
 }
@@ -16274,7 +16275,7 @@ SUPABASE_SOCIAL_INSIGHTS_CUMULATIVE_SNAPSHOTS_TABLE = os.environ.get(
 )
 SOCIAL_INSIGHTS_SYNC_INTERVAL_SECONDS = int(os.environ.get("SOCIAL_INSIGHTS_SYNC_INTERVAL_SECONDS", str(15 * 60)))
 SOCIAL_INSIGHTS_MANUAL_REFRESH_COOLDOWN_SECONDS = int(os.environ.get("SOCIAL_INSIGHTS_MANUAL_REFRESH_COOLDOWN_SECONDS", str(5 * 60)))
-_INSIGHTS_SUPPORTED_PLATFORMS = ("facebook", "instagram", "youtube", "tiktok")
+_INSIGHTS_SUPPORTED_PLATFORMS = ("facebook", "instagram", "youtube", "tiktok", "linkedin")
 _SOCIAL_INSIGHTS_SNAPSHOT_METRIC_KEYS = ("followers",)
 _OAUTH_STATE_TTL_SECONDS = 600
 _oauth_states: Dict[str, Dict[str, Any]] = {}
@@ -18683,12 +18684,11 @@ _PLATFORM_HANDLERS = {
 
 
 # --------------------------------------------------------------------------
-# Social insights (analytics) -- Facebook / Instagram / YouTube only.
-#
-# LinkedIn and TikTok have no analytics scope requested (see PLATFORM_CONFIG)
-# since their real analytics APIs require a separate platform partner
-# approval process -- _get_social_insights_for_account reports them as
-# unsupported rather than silently returning empty data.
+# Social insights (analytics) -- Facebook / Instagram / YouTube / TikTok /
+# LinkedIn (see _INSIGHTS_SUPPORTED_PLATFORMS). Any other connected
+# platform (just LinkedIn's company-Page variant would be, if this app
+# ever grew one) reports "unsupported" instead of silently returning
+# empty data -- see get_social_insights/refresh_social_insights.
 # --------------------------------------------------------------------------
 
 _SOCIAL_INSIGHTS_METRIC_KEYS = (
@@ -18835,7 +18835,7 @@ async def _fetch_facebook_engagement_insights(
     which one(s) got rejected, rather than losing every metric to one bad
     name. An actual token/permission error (401/403) is re-raised so the
     caller can distinguish it from a partial-data failure (see
-    _get_social_insights_for_account)."""
+    sync_one_social_account_insights)."""
     try:
         data = await _request_facebook_insights_metrics(access_token, page_id, _FACEBOOK_DAILY_METRICS, since_unix, until_unix)
         return _parse_facebook_insights_metrics(data)
@@ -18899,7 +18899,7 @@ async def _fetch_facebook_comments_daily(
     count, bucketed by the post's own publish day, over a bounded number of
     pages. Best-effort: returns ({}, 0) on any failure except an actual
     token/permission error, which is re-raised (see
-    _get_social_insights_for_account)."""
+    sync_one_social_account_insights)."""
     daily_by_date: Dict[str, Dict[str, Any]] = {}
     total_comments = 0
     url = f"https://graph.facebook.com/v19.0/{page_id}/posts"
@@ -19102,7 +19102,7 @@ async def _fetch_instagram_reach_insights(
     own and logs exactly which one(s) got rejected (see the equivalent
     Facebook fetcher for why). An actual token/permission error (401/403)
     is re-raised so the caller can distinguish it from a partial-data
-    failure (see _get_social_insights_for_account)."""
+    failure (see sync_one_social_account_insights)."""
     try:
         data = await _request_instagram_insights_metrics(access_token, ig_user_id, _INSTAGRAM_DAILY_METRICS, since_unix, until_unix)
         return _parse_instagram_insights_metrics(data)
@@ -19301,6 +19301,96 @@ async def _fetch_youtube_analytics(access_token: str, since_date: str, until_dat
     return {"metrics": metrics, "daily": daily, "monetization": monetization}
 
 
+_LINKEDIN_QUERY_TYPE_TO_METRIC = {
+    "IMPRESSION": "impressions",
+    "MEMBERS_REACHED": "reach",
+    "REACTION": "engagement",
+    "RESHARE": "engagement",
+    "COMMENT": "comments",
+}
+_LINKEDIN_MONETIZATION_UNSUPPORTED = "LinkedIn does not expose a public ad-revenue API for personal member profiles."
+
+
+def _extract_linkedin_metric_value(elements: List[Dict[str, Any]]) -> int:
+    """Sums whatever numeric value field memberCreatorPostAnalytics
+    returns per element. LinkedIn's Member Post Analytics API (launched
+    mid-2025, r_member_postAnalytics) has no fully-documented public
+    response schema at the time this was written -- "value" and "count"
+    are the field names seen in available third-party integration
+    references, tried in that order. Re-verify this against a real
+    response once r_member_postAnalytics is actually granted for this
+    app (see _request_linkedin_member_post_analytics)."""
+    total = 0
+    for element in elements:
+        value = element.get("value")
+        if value is None:
+            value = element.get("count")
+        if isinstance(value, (int, float)):
+            total += int(value)
+    return total
+
+
+async def _request_linkedin_member_post_analytics(
+    access_token: str, query_type: str, since_unix_ms: int, until_unix_ms: int,
+) -> int:
+    """One queryType per call (unlike Facebook/Instagram's comma-separated
+    `metric` param) aggregated across all of this member's posts
+    (q=me) -- see _LINKEDIN_QUERY_TYPE_TO_METRIC for the full set this
+    app sums into its own metric buckets."""
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            "https://api.linkedin.com/rest/memberCreatorPostAnalytics",
+            headers=_linkedin_headers(access_token, json_body=False),
+            params={
+                "q": "me",
+                "queryType": query_type,
+                "aggregation": "TOTAL",
+                "dateRange": f"(start:{since_unix_ms},end:{until_unix_ms})",
+            },
+        )
+    if response.status_code in (401, 403):
+        await _raise_for_status_or_502(response, "LinkedIn")
+    response.raise_for_status()
+    return _extract_linkedin_metric_value(response.json().get("elements") or [])
+
+
+async def _fetch_linkedin_insights(access_token: str, since_iso: str, until_iso: str) -> Dict[str, Any]:
+    """LinkedIn's memberCreatorPostAnalytics returns one aggregate TOTAL
+    per call for the given date range, not a day-bucketed series like
+    Facebook/Instagram's /insights -- so, like _fetch_tiktok_insights,
+    this returns a single snapshot entry (labelled with since_iso's own
+    date) rather than a real daily breakdown; sync_one_social_account_insights
+    calls this with a short "since start of today" window on every sync
+    tick, so that snapshot IS today's real delta, no diffing needed
+    (unlike TikTok, which has no date-range support at all on its
+    cumulative video counters)."""
+    since_unix_ms = int(datetime.fromisoformat(since_iso).timestamp() * 1000)
+    until_unix_ms = int(datetime.fromisoformat(until_iso).timestamp() * 1000)
+
+    totals: Dict[str, int] = {}
+    for query_type, metric_key in _LINKEDIN_QUERY_TYPE_TO_METRIC.items():
+        try:
+            value = await _request_linkedin_member_post_analytics(access_token, query_type, since_unix_ms, until_unix_ms)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.warning("LinkedIn insights queryType %r rejected: %s", query_type, exc)
+            continue
+        totals[metric_key] = totals.get(metric_key, 0) + value
+
+    metrics = _empty_social_insights_metrics()
+    metrics.update(totals)
+
+    day = str(since_iso)[:10]
+    daily = [{"date": day, **totals}] if totals else []
+    monetization = {
+        "supported": False, "available": False,
+        "reason": _LINKEDIN_MONETIZATION_UNSUPPORTED,
+        "ad_impressions": None, "ad_earnings_cents": None, "ad_cpm_cents": None,
+    }
+    return {"metrics": metrics, "daily": daily, "trends": {}, "monetization": monetization}
+
+
 _TIKTOK_VIDEO_LIST_FIELDS = "id,create_time,view_count,like_count,comment_count,share_count"
 _TIKTOK_USER_STATS_FIELDS = "follower_count,video_count,likes_count"
 _TIKTOK_MONETIZATION_UNSUPPORTED = "TikTok's Display API does not expose ad revenue data for personal/creator accounts."
@@ -19411,34 +19501,6 @@ async def _fetch_tiktok_insights(access_token: str, scopes: str, since_iso: str,
     return {"metrics": metrics, "daily": daily, "trends": {}, "monetization": monetization}
 
 
-async def _get_social_insights_for_account(account: Dict[str, Any], since_iso: str, until_iso: str) -> Dict[str, Any]:
-    platform = str(account.get("platform") or "")
-    if platform not in _INSIGHTS_SUPPORTED_PLATFORMS:
-        return {
-            "supported": False,
-            "reason": f"{platform.capitalize()} analytics require special platform partner access not yet available.",
-            "metrics": None,
-            "daily": [],
-        }
-
-    try:
-        token = await get_valid_token(account)
-        if platform == "facebook":
-            target_id = str(account.get("platform_user_id") or "")
-            result = await _fetch_facebook_page_insights(token, target_id, since_iso, until_iso)
-        elif platform == "instagram":
-            target_id = str(account.get("platform_user_id") or "")
-            result = await _fetch_instagram_insights(token, target_id, since_iso, until_iso)
-        elif platform == "tiktok":
-            result = await _fetch_tiktok_insights(token, str(account.get("scopes") or ""), since_iso, until_iso)
-        else:  # youtube
-            result = await _fetch_youtube_analytics(token, since_iso, until_iso)
-        return {"supported": True, "error": None, **result}
-    except Exception as exc:
-        logger.warning("Failed to fetch %s insights for account %s: %s", platform, account.get("id"), exc)
-        return {"supported": True, "error": str(exc), "metrics": None, "daily": []}
-
-
 def _tiktok_cumulative_from_metrics(metrics: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "impressions": metrics.get("impressions") or 0,
@@ -19495,10 +19557,30 @@ async def _sync_day_bucketed_platform_account_insights(account: Dict[str, Any]) 
         await _upsert_social_insights_daily_row(account["id"], account["user_id"], platform, day, daily_metrics)
 
 
+async def _sync_linkedin_account_insights(account: Dict[str, Any]) -> None:
+    """LinkedIn's memberCreatorPostAnalytics can be scoped to a date range
+    directly (unlike TikTok), so each sync tick just asks for "since the
+    start of today" and stores that as today's row -- no cumulative
+    snapshot/diffing needed, see _fetch_linkedin_insights."""
+    token = await get_valid_token(account)
+    today = datetime.now(timezone.utc).date()
+    start_of_today = datetime(today.year, today.month, today.day, tzinfo=timezone.utc)
+    result = await _fetch_linkedin_insights(token, start_of_today.isoformat(), _utcnow().isoformat())
+
+    for day_entry in result.get("daily") or []:
+        day = day_entry.get("date")
+        if not day:
+            continue
+        daily_metrics = {key: value for key, value in day_entry.items() if key != "date"}
+        await _upsert_social_insights_daily_row(account["id"], account["user_id"], "linkedin", day, daily_metrics)
+
+
 async def sync_one_social_account_insights(account: Dict[str, Any]) -> None:
     platform = str(account.get("platform") or "")
     if platform == "tiktok":
         await _sync_tiktok_account_insights(account)
+    elif platform == "linkedin":
+        await _sync_linkedin_account_insights(account)
     else:
         await _sync_day_bucketed_platform_account_insights(account)
     await _mark_social_account_insights_synced(account["id"])

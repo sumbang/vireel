@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
     AlertTriangle,
+    BarChart3,
     Coins,
     Facebook,
     Instagram,
@@ -29,11 +30,15 @@ import { getApiUrl } from "../../config";
 import { getAuthHeaders } from "../../lib/apiAuth";
 import { useTranslation } from "../../state/LanguageContext";
 
-const INSIGHTS_PLATFORMS = ["facebook", "instagram", "youtube", "tiktok", "linkedin"];
+// "linkedin" itself (the publishing connection) has no analytics scope --
+// LinkedIn requires a separate app/connection for r_member_postAnalytics,
+// stored as its own "linkedin_analytics" platform (see Settings.jsx and
+// PLATFORM_CONFIG["linkedin_analytics"] in app.py).
+const INSIGHTS_PLATFORMS = ["facebook", "instagram", "youtube", "tiktok", "linkedin_analytics"];
 const COMING_SOON_PLATFORMS = [];
 
-const PLATFORM_ICONS = { facebook: Facebook, instagram: Instagram, youtube: Youtube, linkedin: Linkedin, tiktok: Twitch };
-const PLATFORM_LABELS = { facebook: "Facebook", instagram: "Instagram", youtube: "YouTube", linkedin: "LinkedIn", tiktok: "TikTok" };
+const PLATFORM_ICONS = { facebook: Facebook, instagram: Instagram, youtube: Youtube, linkedin: Linkedin, linkedin_analytics: BarChart3, tiktok: Twitch };
+const PLATFORM_LABELS = { facebook: "Facebook", instagram: "Instagram", youtube: "YouTube", linkedin: "LinkedIn", linkedin_analytics: "LinkedIn (Analytics)", tiktok: "TikTok" };
 
 const METRIC_DEFS = [
     { key: "followers", labelKey: "dashboard.metricFollowers", fallback: "Abonnés" },

@@ -429,15 +429,30 @@ PLATFORM_CONFIG = {
         "token_url": "https://www.linkedin.com/oauth/v2/accessToken",
         "client_id": os.getenv("LINKEDIN_CLIENT_ID"),
         "client_secret": os.getenv("LINKEDIN_CLIENT_SECRET"),
-        # r_member_postAnalytics (LinkedIn's Community Management API,
-        # launched mid-2025) is requested for this app's own personal-
-        # profile publishing feature's analytics -- this app has no
-        # company-Page connection flow at all (every publish/comment call
-        # builds urn:li:person:..., never urn:li:organization:...), so
-        # r_organization_social and friends are deliberately NOT requested
-        # here: there is no real use case to demonstrate for them. See
-        # _fetch_linkedin_insights.
-        "scopes": ["w_member_social", "openid", "profile", "email", "r_member_postAnalytics"],
+        # Publishing only. LinkedIn requires analytics (Community
+        # Management API, r_member_postAnalytics) to live on a SEPARATE
+        # developer app from this one -- its own client id/secret, its
+        # own product list, its own redirect URI to register -- see the
+        # "linkedin_analytics" pseudo-platform below. Never mix the two
+        # apps' tokens: each only has the scopes its own app's products
+        # grant, regardless of what PLATFORM_CONFIG lists here.
+        "scopes": ["w_member_social", "openid", "profile", "email"],
+    },
+    # A second LinkedIn developer app, used ONLY for
+    # r_member_postAnalytics (see _fetch_linkedin_insights) -- stored as
+    # its own "platform" value so it gets its own social_accounts row
+    # (and its own "Connect" tile in Settings) alongside the regular
+    # "linkedin" publishing connection for the same LinkedIn member,
+    # rather than trying to cram two different apps' tokens into one row.
+    # openid/profile let this app's own identity resolve the normal way
+    # (see fetch_platform_identity) -- enable "Sign In with LinkedIn
+    # using OpenID Connect" on this second app too if that call 403s.
+    "linkedin_analytics": {
+        "auth_url": "https://www.linkedin.com/oauth/v2/authorization",
+        "token_url": "https://www.linkedin.com/oauth/v2/accessToken",
+        "client_id": os.getenv("LINKEDIN_ANALYTICS_CLIENT_ID"),
+        "client_secret": os.getenv("LINKEDIN_ANALYTICS_CLIENT_SECRET"),
+        "scopes": ["openid", "profile", "r_member_postAnalytics"],
     },
     "facebook": {
         "auth_url": "https://www.facebook.com/v19.0/dialog/oauth",
@@ -16275,7 +16290,7 @@ SUPABASE_SOCIAL_INSIGHTS_CUMULATIVE_SNAPSHOTS_TABLE = os.environ.get(
 )
 SOCIAL_INSIGHTS_SYNC_INTERVAL_SECONDS = int(os.environ.get("SOCIAL_INSIGHTS_SYNC_INTERVAL_SECONDS", str(15 * 60)))
 SOCIAL_INSIGHTS_MANUAL_REFRESH_COOLDOWN_SECONDS = int(os.environ.get("SOCIAL_INSIGHTS_MANUAL_REFRESH_COOLDOWN_SECONDS", str(5 * 60)))
-_INSIGHTS_SUPPORTED_PLATFORMS = ("facebook", "instagram", "youtube", "tiktok", "linkedin")
+_INSIGHTS_SUPPORTED_PLATFORMS = ("facebook", "instagram", "youtube", "tiktok", "linkedin_analytics")
 _SOCIAL_INSIGHTS_SNAPSHOT_METRIC_KEYS = ("followers",)
 _OAUTH_STATE_TTL_SECONDS = 600
 _oauth_states: Dict[str, Dict[str, Any]] = {}
@@ -17533,7 +17548,7 @@ async def fetch_platform_identity(platform: str, access_token: str):
 
     headers = {"Authorization": f"Bearer {access_token}"}
     async with httpx.AsyncClient(timeout=20.0) as client:
-        if platform == "linkedin":
+        if platform in ("linkedin", "linkedin_analytics"):
             return await _fetch_linkedin_identity(client, headers)
         if platform == "facebook":
             return await _fetch_facebook_identity(client, headers)
@@ -19572,14 +19587,14 @@ async def _sync_linkedin_account_insights(account: Dict[str, Any]) -> None:
         if not day:
             continue
         daily_metrics = {key: value for key, value in day_entry.items() if key != "date"}
-        await _upsert_social_insights_daily_row(account["id"], account["user_id"], "linkedin", day, daily_metrics)
+        await _upsert_social_insights_daily_row(account["id"], account["user_id"], "linkedin_analytics", day, daily_metrics)
 
 
 async def sync_one_social_account_insights(account: Dict[str, Any]) -> None:
     platform = str(account.get("platform") or "")
     if platform == "tiktok":
         await _sync_tiktok_account_insights(account)
-    elif platform == "linkedin":
+    elif platform == "linkedin_analytics":
         await _sync_linkedin_account_insights(account)
     else:
         await _sync_day_bucketed_platform_account_insights(account)

@@ -9588,11 +9588,15 @@ def test_get_social_insights_returns_unsupported_for_unknown_platform(monkeypatc
     assert data["daily"] == []
 
 
-def test_get_social_insights_supports_linkedin_from_storage(monkeypatch):
+def test_get_social_insights_supports_linkedin_analytics_from_storage(monkeypatch):
+    # The analytics connection is its own "platform" value
+    # ("linkedin_analytics"), separate from the publishing "linkedin"
+    # connection -- LinkedIn requires a separate developer app (and thus
+    # a separate OAuth connection) for r_member_postAnalytics.
     app = _import_app_with_stubs(monkeypatch)
     monkeypatch.setattr(app, "_assert_user_can_access_analytics", AsyncMock())
     monkeypatch.setattr(app, "_get_social_account_by_id", AsyncMock(return_value={
-        "id": "acct-1", "platform": "linkedin", "platform_account_name": "My LI Profile",
+        "id": "acct-1", "platform": "linkedin_analytics", "platform_account_name": "My LI Profile",
         "last_insights_synced_at": None,
     }))
     monkeypatch.setattr(app, "_list_social_insights_daily", AsyncMock(return_value=[
@@ -9605,7 +9609,7 @@ def test_get_social_insights_supports_linkedin_from_storage(monkeypatch):
     assert resp.status_code == 200
     data = resp.json()
     assert data["supported"] is True
-    assert data["platform"] == "linkedin"
+    assert data["platform"] == "linkedin_analytics"
     assert data["metrics"]["impressions"] == 50
 
 
@@ -10223,9 +10227,50 @@ def test_sync_linkedin_account_insights_upserts_todays_row(monkeypatch):
 
     upsert_mock.assert_awaited_once()
     args = upsert_mock.await_args.args
-    assert args[2] == "linkedin"
+    assert args[2] == "linkedin_analytics"
     assert args[3] == "2026-10-14"
     assert args[4]["impressions"] == 50
+
+
+def test_platform_config_splits_linkedin_publishing_and_analytics_apps(monkeypatch):
+    # LinkedIn requires analytics (r_member_postAnalytics) to live on a
+    # separate developer app -- its own client id/secret -- from the one
+    # used for publishing (w_member_social). Must never request
+    # r_member_postAnalytics on the publishing app's scope list, nor
+    # w_member_social on the analytics app's.
+    app = _import_app_with_stubs(monkeypatch)
+    publish_scopes = app.PLATFORM_CONFIG["linkedin"]["scopes"]
+    analytics_scopes = app.PLATFORM_CONFIG["linkedin_analytics"]["scopes"]
+
+    assert "w_member_social" in publish_scopes
+    assert "r_member_postAnalytics" not in publish_scopes
+    assert "r_member_postAnalytics" in analytics_scopes
+    assert "w_member_social" not in analytics_scopes
+
+
+def test_fetch_platform_identity_routes_linkedin_analytics_to_linkedin_identity(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+    identity_mock = AsyncMock(return_value={"id": "member-1", "name": "Jane Doe"})
+    monkeypatch.setattr(app, "_fetch_linkedin_identity", identity_mock)
+
+    result = asyncio.run(app.fetch_platform_identity("linkedin_analytics", "token-1"))
+
+    identity_mock.assert_awaited_once()
+    assert result == {"id": "member-1", "name": "Jane Doe"}
+
+
+def test_sync_one_social_account_insights_routes_linkedin_analytics(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+    linkedin_sync_mock = AsyncMock()
+    day_bucketed_mock = AsyncMock()
+    monkeypatch.setattr(app, "_sync_linkedin_account_insights", linkedin_sync_mock)
+    monkeypatch.setattr(app, "_sync_day_bucketed_platform_account_insights", day_bucketed_mock)
+    monkeypatch.setattr(app, "_mark_social_account_insights_synced", AsyncMock())
+
+    asyncio.run(app.sync_one_social_account_insights({"id": "acct-1", "platform": "linkedin_analytics"}))
+
+    linkedin_sync_mock.assert_awaited_once()
+    day_bucketed_mock.assert_not_awaited()
 
 
 def test_fetch_youtube_analytics_parses_rows(monkeypatch):

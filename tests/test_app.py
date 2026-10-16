@@ -10140,7 +10140,7 @@ def test_fetch_tiktok_insights_sums_video_list_and_reads_follower_count(monkeypa
     monkeypatch.setattr(app.httpx, "AsyncClient", _FakeAsyncClient)
 
     result = asyncio.run(app._fetch_tiktok_insights(
-        "token-1", "video.list,user.info.stats", "2026-09-08", "2026-09-10",
+        "token-1", "video.list,user.info.stats",
     ))
 
     assert result["metrics"]["impressions"] == 300  # 100 + 200 views
@@ -10160,7 +10160,7 @@ def test_fetch_tiktok_insights_skips_calls_for_ungranted_scopes(monkeypatch):
     monkeypatch.setattr(app, "_fetch_tiktok_recent_videos", video_list_mock)
     monkeypatch.setattr(app, "_fetch_tiktok_account_stats", stats_mock)
 
-    result = asyncio.run(app._fetch_tiktok_insights("token-1", "video.upload,user.info.basic", "2026-09-08", "2026-09-10"))
+    result = asyncio.run(app._fetch_tiktok_insights("token-1", "video.upload,user.info.basic"))
 
     video_list_mock.assert_not_awaited()
     stats_mock.assert_not_awaited()

@@ -217,6 +217,7 @@ _CONTENT_TYPE_JSON = "application/json"
 _DEFAULT_UPLOAD_FILENAME = "upload.mp4"
 _CLIP_INDEX_SUFFIX_PATTERN = r"_clip_(\d+)\.mp4$"
 _JOB_NOT_FOUND = "Job not found"
+_SOCIAL_ACCOUNT_NOT_FOUND = "Social account not found"
 _INVALID_INPUT_FILENAME = "Invalid input filename"
 _SUBSCRIPTION_PLAN_NOT_FOUND = "Subscription plan not found"
 _NO_ACTIVE_SUBSCRIPTION = "No active subscription"
@@ -17111,7 +17112,7 @@ async def disconnect_social_account(account_id: str, user_id: Annotated[str, Dep
     have more than one account per platform (see _upsert_social_account)."""
     account = await _get_social_account_by_id(user_id, account_id)
     if not account:
-        raise HTTPException(status_code=404, detail="Social account not found")
+        raise HTTPException(status_code=404, detail=_SOCIAL_ACCOUNT_NOT_FOUND)
     client = await supabase_get_client()
     response = (
         await client.table(SUPABASE_SOCIAL_ACCOUNTS_TABLE)
@@ -19474,12 +19475,12 @@ def _sum_tiktok_video_metrics(videos: List[Dict[str, Any]]) -> Dict[str, int]:
     return totals
 
 
-async def _fetch_tiktok_insights(access_token: str, scopes: str, since_iso: str, until_iso: str) -> Dict[str, Any]:
+async def _fetch_tiktok_insights(access_token: str, scopes: str) -> Dict[str, Any]:
     """TikTok's Display API has no day-bucketed historical insights edge
     like Facebook/Instagram's /insights -- video/list only ever returns
-    each video's CURRENT cumulative counters, so since_iso/until_iso (kept
-    only for call-site symmetry with the other _fetch_*_insights
-    functions) go unused here. This returns a single "today" snapshot of
+    each video's CURRENT cumulative counters, so there's no since/until
+    window to pass through here (unlike the other _fetch_*_insights
+    functions). This returns a single "today" snapshot of
     account-wide cumulative totals (views/likes/shares/comments summed
     across every video, plus follower count); sync_social_insights_snapshots
     (the periodic sync job) is what turns consecutive snapshots into real
@@ -19528,7 +19529,7 @@ async def _sync_tiktok_account_insights(account: Dict[str, Any]) -> None:
     account_id = account["id"]
     token = await get_valid_token(account)
     today = datetime.now(timezone.utc).date()
-    result = await _fetch_tiktok_insights(token, str(account.get("scopes") or ""), today.isoformat(), today.isoformat())
+    result = await _fetch_tiktok_insights(token, str(account.get("scopes") or ""))
     metrics = result["metrics"]
     cumulative_now = _tiktok_cumulative_from_metrics(metrics)
     await _insert_social_insights_cumulative_snapshot(account_id, cumulative_now)
@@ -19697,7 +19698,7 @@ async def get_social_insights(
         raise HTTPException(status_code=400, detail="range must be one of: 7d, 30d, 90d")
     account = await _get_social_account_by_id(user_id, account_id)
     if not account:
-        raise HTTPException(status_code=404, detail="Social account not found")
+        raise HTTPException(status_code=404, detail=_SOCIAL_ACCOUNT_NOT_FOUND)
 
     platform = str(account.get("platform") or "")
     if platform not in _INSIGHTS_SUPPORTED_PLATFORMS:
@@ -19733,7 +19734,7 @@ async def refresh_social_insights(
     await _assert_user_can_access_analytics(user_id)
     account = await _get_social_account_by_id(user_id, account_id)
     if not account:
-        raise HTTPException(status_code=404, detail="Social account not found")
+        raise HTTPException(status_code=404, detail=_SOCIAL_ACCOUNT_NOT_FOUND)
 
     platform = str(account.get("platform") or "")
     if platform not in _INSIGHTS_SUPPORTED_PLATFORMS:

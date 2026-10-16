@@ -9566,11 +9566,15 @@ def test_get_social_insights_rejects_below_gold(monkeypatch):
     assert resp.status_code == 403
 
 
-def test_get_social_insights_returns_unsupported_for_linkedin(monkeypatch):
+def test_get_social_insights_returns_unsupported_for_unknown_platform(monkeypatch):
+    # No platform this app actually connects accounts for is unsupported
+    # any more (facebook/instagram/youtube/tiktok/linkedin all are) -- this
+    # exercises the fallback branch generically in case a new platform is
+    # ever added to PLATFORM_CONFIG without insights support yet.
     app = _import_app_with_stubs(monkeypatch)
     monkeypatch.setattr(app, "_assert_user_can_access_analytics", AsyncMock())
     monkeypatch.setattr(app, "_get_social_account_by_id", AsyncMock(return_value={
-        "id": "acct-1", "platform": "linkedin", "platform_account_name": "My LI Page",
+        "id": "acct-1", "platform": "pinterest", "platform_account_name": "My Board",
     }))
 
     with TestClient(app.app) as client:
@@ -9579,9 +9583,199 @@ def test_get_social_insights_returns_unsupported_for_linkedin(monkeypatch):
     assert resp.status_code == 200
     data = resp.json()
     assert data["supported"] is False
-    assert data["platform"] == "linkedin"
+    assert data["platform"] == "pinterest"
     assert data["metrics"] is None
     assert data["daily"] == []
+
+
+def test_get_social_insights_supports_linkedin_analytics_from_storage(monkeypatch):
+    # The analytics connection is its own "platform" value
+    # ("linkedin_analytics"), separate from the publishing "linkedin"
+    # connection -- LinkedIn requires a separate developer app (and thus
+    # a separate OAuth connection) for r_member_postAnalytics.
+    app = _import_app_with_stubs(monkeypatch)
+    monkeypatch.setattr(app, "_assert_user_can_access_analytics", AsyncMock())
+    monkeypatch.setattr(app, "_get_social_account_by_id", AsyncMock(return_value={
+        "id": "acct-1", "platform": "linkedin_analytics", "platform_account_name": "My LI Profile",
+        "last_insights_synced_at": None,
+    }))
+    monkeypatch.setattr(app, "_list_social_insights_daily", AsyncMock(return_value=[
+        {"day": "2026-10-14", "metrics": {"impressions": 50, "engagement": 8, "comments": 2}},
+    ]))
+
+    with TestClient(app.app) as client:
+        resp = client.get("/api/social/insights", params={"account_id": "acct-1"}, headers=_auth_headers("u1"))
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["supported"] is True
+    assert data["platform"] == "linkedin_analytics"
+    assert data["metrics"]["impressions"] == 50
+
+
+def test_get_social_insights_reads_from_storage_not_live_api(monkeypatch):
+    # Regression test for the periodic-sync rework: the endpoint must
+    # read stored daily rows (and the account's last_insights_synced_at)
+    # instead of calling the platform API live on every page load.
+    app = _import_app_with_stubs(monkeypatch)
+    monkeypatch.setattr(app, "_assert_user_can_access_analytics", AsyncMock())
+    monkeypatch.setattr(app, "_get_social_account_by_id", AsyncMock(return_value={
+        "id": "acct-1", "platform": "facebook", "platform_account_name": "My Page",
+        "last_insights_synced_at": "2026-10-10T08:00:00+00:00",
+    }))
+    live_fetch_mock = AsyncMock()
+    monkeypatch.setattr(app, "_fetch_facebook_page_insights", live_fetch_mock)
+    monkeypatch.setattr(app, "_list_social_insights_daily", AsyncMock(return_value=[
+        {"day": "2026-10-09", "metrics": {"impressions": 10, "engagement": 2, "followers": 100}},
+        {"day": "2026-10-10", "metrics": {"impressions": 15, "engagement": 3, "followers": 101}},
+    ]))
+
+    with TestClient(app.app) as client:
+        resp = client.get("/api/social/insights", params={"account_id": "acct-1"}, headers=_auth_headers("u1"))
+
+    assert resp.status_code == 200
+    data = resp.json()
+    live_fetch_mock.assert_not_awaited()
+    assert data["metrics"]["impressions"] == 25
+    assert data["metrics"]["followers"] == 101  # last day's snapshot, not summed
+    assert data["last_synced_at"] == "2026-10-10T08:00:00+00:00"
+    assert len(data["daily"]) == 2
+
+
+def test_aggregate_social_insights_daily_rows_sums_deltas_snapshots_followers(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+    rows = [
+        {"day": "2026-10-09", "metrics": {"impressions": 10, "comments": 1, "followers": 100}},
+        {"day": "2026-10-10", "metrics": {"impressions": 15, "comments": 2, "followers": 103}},
+    ]
+    result = app._aggregate_social_insights_daily_rows(rows)
+    assert result["metrics"]["impressions"] == 25
+    assert result["metrics"]["comments"] == 3
+    assert result["metrics"]["followers"] == 103
+    assert result["totals"] == {"impressions": 25, "comments": 3}
+
+
+def test_aggregate_social_insights_daily_rows_handles_empty_rows(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+    result = app._aggregate_social_insights_daily_rows([])
+    assert result["metrics"]["followers"] is None
+    assert result["metrics"]["impressions"] is None
+    assert result["totals"] == {}
+    assert result["daily"] == []
+
+
+def test_sync_tiktok_account_insights_computes_delta_from_previous_day(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+    monkeypatch.setattr(app, "get_valid_token", AsyncMock(return_value="token-1"))
+    monkeypatch.setattr(app, "_fetch_tiktok_insights", AsyncMock(return_value={
+        "metrics": {"impressions": 1000, "engagement": 50, "comments": 10, "followers": 500},
+        "daily": [], "trends": {}, "monetization": {},
+    }))
+    monkeypatch.setattr(app, "_insert_social_insights_cumulative_snapshot", AsyncMock())
+    monkeypatch.setattr(app, "_get_previous_day_social_insights_cumulative_snapshot", AsyncMock(return_value={
+        "cumulative": {"impressions": 900, "engagement": 40, "comments": 8},
+    }))
+    upsert_mock = AsyncMock()
+    monkeypatch.setattr(app, "_upsert_social_insights_daily_row", upsert_mock)
+
+    asyncio.run(app._sync_tiktok_account_insights({"id": "acct-1", "user_id": "u1", "scopes": "video.list,user.info.stats"}))
+
+    upsert_mock.assert_awaited_once()
+    args = upsert_mock.await_args.args
+    daily_metrics = args[4]
+    assert daily_metrics["impressions"] == 100  # 1000 - 900
+    assert daily_metrics["engagement"] == 10    # 50 - 40
+    assert daily_metrics["comments"] == 2       # 10 - 8
+    assert daily_metrics["followers"] == 500    # snapshot, untouched by the diff
+
+
+def test_sync_tiktok_account_insights_no_previous_snapshot_uses_full_total(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+    monkeypatch.setattr(app, "get_valid_token", AsyncMock(return_value="token-1"))
+    monkeypatch.setattr(app, "_fetch_tiktok_insights", AsyncMock(return_value={
+        "metrics": {"impressions": 1000, "engagement": 50, "comments": 10, "followers": 500},
+        "daily": [], "trends": {}, "monetization": {},
+    }))
+    monkeypatch.setattr(app, "_insert_social_insights_cumulative_snapshot", AsyncMock())
+    monkeypatch.setattr(app, "_get_previous_day_social_insights_cumulative_snapshot", AsyncMock(return_value=None))
+    upsert_mock = AsyncMock()
+    monkeypatch.setattr(app, "_upsert_social_insights_daily_row", upsert_mock)
+
+    asyncio.run(app._sync_tiktok_account_insights({"id": "acct-1", "user_id": "u1", "scopes": "video.list,user.info.stats"}))
+
+    daily_metrics = upsert_mock.await_args.args[4]
+    assert daily_metrics["impressions"] == 1000
+
+
+def test_sync_day_bucketed_platform_account_insights_upserts_each_day(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+    monkeypatch.setattr(app, "get_valid_token", AsyncMock(return_value="token-1"))
+    monkeypatch.setattr(app, "_fetch_facebook_page_insights", AsyncMock(return_value={
+        "metrics": {"followers": 200},
+        "daily": [
+            {"date": "2026-10-09", "impressions": 10, "engagement": 2},
+            {"date": "2026-10-10", "impressions": 15, "engagement": 3},
+        ],
+    }))
+    upsert_mock = AsyncMock()
+    monkeypatch.setattr(app, "_upsert_social_insights_daily_row", upsert_mock)
+
+    asyncio.run(app._sync_day_bucketed_platform_account_insights({
+        "id": "acct-1", "user_id": "u1", "platform": "facebook", "platform_user_id": "page-1",
+    }))
+
+    assert upsert_mock.await_count == 2
+    first_call_metrics = upsert_mock.await_args_list[0].args[4]
+    assert first_call_metrics["impressions"] == 10
+    assert first_call_metrics["followers"] == 200
+
+
+def test_refresh_social_insights_enforces_cooldown(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+    monkeypatch.setattr(app, "_assert_user_can_access_analytics", AsyncMock())
+    monkeypatch.setattr(app, "_get_social_account_by_id", AsyncMock(return_value={
+        "id": "acct-1", "platform": "facebook",
+        "last_insights_synced_at": app.datetime.now(app.timezone.utc).isoformat(),
+    }))
+    sync_mock = AsyncMock()
+    monkeypatch.setattr(app, "sync_one_social_account_insights", sync_mock)
+
+    with TestClient(app.app) as client:
+        resp = client.post("/api/social/insights/refresh", params={"account_id": "acct-1"}, headers=_auth_headers("u1"))
+
+    assert resp.status_code == 429
+    sync_mock.assert_not_awaited()
+
+
+def test_refresh_social_insights_succeeds_after_cooldown(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+    monkeypatch.setattr(app, "_assert_user_can_access_analytics", AsyncMock())
+    old_sync = (app.datetime.now(app.timezone.utc) - app.timedelta(hours=1)).isoformat()
+    monkeypatch.setattr(app, "_get_social_account_by_id", AsyncMock(return_value={
+        "id": "acct-1", "platform": "facebook", "last_insights_synced_at": old_sync,
+    }))
+    sync_mock = AsyncMock()
+    monkeypatch.setattr(app, "sync_one_social_account_insights", sync_mock)
+
+    with TestClient(app.app) as client:
+        resp = client.post("/api/social/insights/refresh", params={"account_id": "acct-1"}, headers=_auth_headers("u1"))
+
+    assert resp.status_code == 200
+    assert resp.json() == {"refreshed": True}
+    sync_mock.assert_awaited_once()
+
+
+def test_refresh_social_insights_rejects_unsupported_platform(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+    monkeypatch.setattr(app, "_assert_user_can_access_analytics", AsyncMock())
+    monkeypatch.setattr(app, "_get_social_account_by_id", AsyncMock(return_value={
+        "id": "acct-1", "platform": "pinterest", "last_insights_synced_at": None,
+    }))
+
+    with TestClient(app.app) as client:
+        resp = client.post("/api/social/insights/refresh", params={"account_id": "acct-1"}, headers=_auth_headers("u1"))
+
+    assert resp.status_code == 400
 
 
 def test_fetch_facebook_page_insights_parses_daily_series(monkeypatch):
@@ -9909,6 +10103,174 @@ def test_fetch_instagram_insights_uses_instagram_login_host(monkeypatch):
     for url in requested_urls:
         assert url.startswith("https://graph.instagram.com/")
         assert "graph.facebook.com" not in url
+
+
+def test_fetch_tiktok_insights_sums_video_list_and_reads_follower_count(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+
+    videos_body = {
+        "data": {
+            "videos": [
+                {"id": "v1", "view_count": 100, "like_count": 10, "comment_count": 2, "share_count": 1},
+                {"id": "v2", "view_count": 200, "like_count": 20, "comment_count": 3, "share_count": 4},
+            ],
+            "has_more": False,
+        }
+    }
+    stats_body = {"data": {"user": {"follower_count": 555}}}
+
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, url, params=None, headers=None):
+            request = app.httpx.Request("GET", url)
+            return app.httpx.Response(200, json=stats_body, request=request)
+
+        async def post(self, url, params=None, headers=None, json=None):
+            request = app.httpx.Request("POST", url)
+            return app.httpx.Response(200, json=videos_body, request=request)
+
+    monkeypatch.setattr(app.httpx, "AsyncClient", _FakeAsyncClient)
+
+    result = asyncio.run(app._fetch_tiktok_insights(
+        "token-1", "video.list,user.info.stats",
+    ))
+
+    assert result["metrics"]["impressions"] == 300  # 100 + 200 views
+    assert result["metrics"]["engagement"] == 35    # (10+1) + (20+4) likes+shares
+    assert result["metrics"]["comments"] == 5
+    assert result["metrics"]["followers"] == 555
+    assert len(result["daily"]) == 1
+
+
+def test_fetch_tiktok_insights_skips_calls_for_ungranted_scopes(monkeypatch):
+    # TikTok allows a user to decline individual scopes even after the app
+    # requests both -- must not attempt (and fail/misreport) a call for a
+    # scope that was never actually granted.
+    app = _import_app_with_stubs(monkeypatch)
+    video_list_mock = AsyncMock()
+    stats_mock = AsyncMock()
+    monkeypatch.setattr(app, "_fetch_tiktok_recent_videos", video_list_mock)
+    monkeypatch.setattr(app, "_fetch_tiktok_account_stats", stats_mock)
+
+    result = asyncio.run(app._fetch_tiktok_insights("token-1", "video.upload,user.info.basic"))
+
+    video_list_mock.assert_not_awaited()
+    stats_mock.assert_not_awaited()
+    assert result["metrics"]["impressions"] is None
+    assert result["metrics"]["followers"] is None
+    assert result["daily"] == []
+
+
+def test_extract_linkedin_metric_value_sums_value_and_count_fields(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+    elements = [{"value": 10}, {"count": 5}, {"value": 2.0}, {"other": "ignored"}]
+    assert app._extract_linkedin_metric_value(elements) == 17
+
+
+def test_fetch_linkedin_insights_sums_each_query_type_into_its_metric(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+
+    async def fake_request(access_token, query_type, since_ms, until_ms):
+        return {"IMPRESSION": 100, "MEMBERS_REACHED": 40, "REACTION": 5, "RESHARE": 3, "COMMENT": 2}[query_type]
+
+    monkeypatch.setattr(app, "_request_linkedin_member_post_analytics", fake_request)
+
+    result = asyncio.run(app._fetch_linkedin_insights(
+        "token-1", "2026-10-14T00:00:00+00:00", "2026-10-14T12:00:00+00:00",
+    ))
+
+    assert result["metrics"]["impressions"] == 100
+    assert result["metrics"]["reach"] == 40
+    assert result["metrics"]["engagement"] == 8  # REACTION + RESHARE
+    assert result["metrics"]["comments"] == 2
+    assert len(result["daily"]) == 1
+    assert result["daily"][0]["date"] == "2026-10-14"
+
+
+def test_fetch_linkedin_insights_skips_rejected_query_type_without_failing_others(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+
+    async def fake_request(access_token, query_type, since_ms, until_ms):
+        if query_type == "COMMENT":
+            raise RuntimeError("not permitted")
+        return 10
+
+    monkeypatch.setattr(app, "_request_linkedin_member_post_analytics", fake_request)
+
+    result = asyncio.run(app._fetch_linkedin_insights(
+        "token-1", "2026-10-14T00:00:00+00:00", "2026-10-14T12:00:00+00:00",
+    ))
+
+    assert result["metrics"]["comments"] is None
+    assert result["metrics"]["impressions"] == 10
+
+
+def test_sync_linkedin_account_insights_upserts_todays_row(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+    monkeypatch.setattr(app, "get_valid_token", AsyncMock(return_value="token-1"))
+    monkeypatch.setattr(app, "_fetch_linkedin_insights", AsyncMock(return_value={
+        "metrics": {"impressions": 50}, "daily": [{"date": "2026-10-14", "impressions": 50}],
+        "trends": {}, "monetization": {},
+    }))
+    upsert_mock = AsyncMock()
+    monkeypatch.setattr(app, "_upsert_social_insights_daily_row", upsert_mock)
+
+    asyncio.run(app._sync_linkedin_account_insights({"id": "acct-1", "user_id": "u1"}))
+
+    upsert_mock.assert_awaited_once()
+    args = upsert_mock.await_args.args
+    assert args[2] == "linkedin_analytics"
+    assert args[3] == "2026-10-14"
+    assert args[4]["impressions"] == 50
+
+
+def test_platform_config_splits_linkedin_publishing_and_analytics_apps(monkeypatch):
+    # LinkedIn requires analytics (r_member_postAnalytics) to live on a
+    # separate developer app -- its own client id/secret -- from the one
+    # used for publishing (w_member_social). Must never request
+    # r_member_postAnalytics on the publishing app's scope list, nor
+    # w_member_social on the analytics app's.
+    app = _import_app_with_stubs(monkeypatch)
+    publish_scopes = app.PLATFORM_CONFIG["linkedin"]["scopes"]
+    analytics_scopes = app.PLATFORM_CONFIG["linkedin_analytics"]["scopes"]
+
+    assert "w_member_social" in publish_scopes
+    assert "r_member_postAnalytics" not in publish_scopes
+    assert "r_member_postAnalytics" in analytics_scopes
+    assert "w_member_social" not in analytics_scopes
+
+
+def test_fetch_platform_identity_routes_linkedin_analytics_to_linkedin_identity(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+    identity_mock = AsyncMock(return_value={"id": "member-1", "name": "Jane Doe"})
+    monkeypatch.setattr(app, "_fetch_linkedin_identity", identity_mock)
+
+    result = asyncio.run(app.fetch_platform_identity("linkedin_analytics", "token-1"))
+
+    identity_mock.assert_awaited_once()
+    assert result == {"id": "member-1", "name": "Jane Doe"}
+
+
+def test_sync_one_social_account_insights_routes_linkedin_analytics(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+    linkedin_sync_mock = AsyncMock()
+    day_bucketed_mock = AsyncMock()
+    monkeypatch.setattr(app, "_sync_linkedin_account_insights", linkedin_sync_mock)
+    monkeypatch.setattr(app, "_sync_day_bucketed_platform_account_insights", day_bucketed_mock)
+    monkeypatch.setattr(app, "_mark_social_account_insights_synced", AsyncMock())
+
+    asyncio.run(app.sync_one_social_account_insights({"id": "acct-1", "platform": "linkedin_analytics"}))
+
+    linkedin_sync_mock.assert_awaited_once()
+    day_bucketed_mock.assert_not_awaited()
 
 
 def test_fetch_youtube_analytics_parses_rows(monkeypatch):

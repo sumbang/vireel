@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   User, Mail, Copy, Check, Moon, Sun, Monitor, Linkedin, Twitch, Youtube, Facebook, Instagram,
   CreditCardIcon, History, Plus, Minus, Loader2, AlertTriangle, Coins, PauseCircle, PlayCircle, RefreshCw,
-  ChevronDown, Trash2, Clock, XCircle,
+  ChevronDown, Trash2, Clock, XCircle, BarChart3,
 } from 'lucide-react';
 import { useAuth } from '../state/AuthContext';
 import { useTheme } from '../state/ThemeContext';
@@ -27,6 +27,19 @@ const SOCIAL_NETWORKS = [
     icon: Linkedin,
     color: 'from-blue-600 to-blue-400',
     description: 'Share your professional network',
+  },
+  {
+    // A SEPARATE LinkedIn developer app/connection from the one above --
+    // LinkedIn requires analytics (r_member_postAnalytics) to live on its
+    // own app, with its own client id/secret, so this is its own
+    // "platform" value and its own Connect button, not an extra scope on
+    // the publishing connection. See PLATFORM_CONFIG["linkedin_analytics"]
+    // in app.py.
+    id: 'linkedin_analytics',
+    name: 'LinkedIn (Analytics)',
+    icon: BarChart3,
+    color: 'from-blue-700 to-sky-500',
+    description: 'View your LinkedIn post analytics',
   },
   {
     id: 'tiktok',

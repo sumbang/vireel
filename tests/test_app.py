@@ -10213,23 +10213,30 @@ def test_fetch_linkedin_insights_skips_rejected_query_type_without_failing_other
     assert result["metrics"]["impressions"] == 10
 
 
-def test_sync_linkedin_account_insights_upserts_todays_row(monkeypatch):
+def test_sync_linkedin_account_insights_backfills_trailing_week(monkeypatch):
     app = _import_app_with_stubs(monkeypatch)
     monkeypatch.setattr(app, "get_valid_token", AsyncMock(return_value="token-1"))
-    monkeypatch.setattr(app, "_fetch_linkedin_insights", AsyncMock(return_value={
-        "metrics": {"impressions": 50}, "daily": [{"date": "2026-10-14", "impressions": 50}],
-        "trends": {}, "monetization": {},
-    }))
+
+    async def fake_fetch_linkedin_insights(token, since_iso, until_iso):
+        day = since_iso[:10]
+        return {"metrics": {"impressions": 50}, "daily": [{"date": day, "impressions": 50}], "trends": {}, "monetization": {}}
+
+    fetch_mock = AsyncMock(side_effect=fake_fetch_linkedin_insights)
+    monkeypatch.setattr(app, "_fetch_linkedin_insights", fetch_mock)
     upsert_mock = AsyncMock()
     monkeypatch.setattr(app, "_upsert_social_insights_daily_row", upsert_mock)
 
     asyncio.run(app._sync_linkedin_account_insights({"id": "acct-1", "user_id": "u1"}))
 
-    upsert_mock.assert_awaited_once()
-    args = upsert_mock.await_args.args
-    assert args[2] == "linkedin_analytics"
-    assert args[3] == "2026-10-14"
-    assert args[4]["impressions"] == 50
+    assert fetch_mock.await_count == app._SOCIAL_INSIGHTS_SYNC_WINDOW_DAYS
+    assert upsert_mock.await_count == app._SOCIAL_INSIGHTS_SYNC_WINDOW_DAYS
+    today = app.datetime.now(app.timezone.utc).date().isoformat()
+    # The loop walks from today back to 6 days ago, so the first upsert
+    # (not the last) is today's row.
+    first_args = upsert_mock.await_args_list[0].args
+    assert first_args[2] == "linkedin_analytics"
+    assert first_args[3] == today
+    assert first_args[4]["impressions"] == 50
 
 
 def test_platform_config_splits_linkedin_publishing_and_analytics_apps(monkeypatch):

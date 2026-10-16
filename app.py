@@ -16293,6 +16293,11 @@ SOCIAL_INSIGHTS_SYNC_INTERVAL_SECONDS = int(os.environ.get("SOCIAL_INSIGHTS_SYNC
 SOCIAL_INSIGHTS_MANUAL_REFRESH_COOLDOWN_SECONDS = int(os.environ.get("SOCIAL_INSIGHTS_MANUAL_REFRESH_COOLDOWN_SECONDS", str(5 * 60)))
 _INSIGHTS_SUPPORTED_PLATFORMS = ("facebook", "instagram", "youtube", "tiktok", "linkedin_analytics")
 _SOCIAL_INSIGHTS_SNAPSHOT_METRIC_KEYS = ("followers",)
+# How many trailing days (including the day of the sync itself) each
+# periodic/manual sync re-fetches and stores, so the dashboard's weekly
+# trend chart has a full week of data after a single sync rather than
+# accumulating it one new day at a time.
+_SOCIAL_INSIGHTS_SYNC_WINDOW_DAYS = 7
 _OAUTH_STATE_TTL_SECONDS = 600
 _oauth_states: Dict[str, Dict[str, Any]] = {}
 
@@ -19547,14 +19552,17 @@ async def _sync_tiktok_account_insights(account: Dict[str, Any]) -> None:
 
 async def _sync_day_bucketed_platform_account_insights(account: Dict[str, Any]) -> None:
     """Facebook/Instagram/YouTube already give real day-bucketed history
-    from their own insights APIs -- just re-fetch a short trailing window
-    (today plus the prior 2 days, to catch a day that was still
-    incomplete at its own last sync) and upsert each day's row as-is, no
-    diffing needed."""
+    from their own insights APIs -- just re-fetch the trailing
+    _SOCIAL_INSIGHTS_SYNC_WINDOW_DAYS window (today plus the prior 6 days)
+    and upsert each day's row as-is, no diffing needed. Re-fetching the
+    full week on every sync (rather than only today) is what lets a
+    freshly-connected account show a full week of trends right after its
+    very first sync/refresh, instead of waiting a week for the daily
+    rows to accumulate one at a time."""
     platform = str(account.get("platform") or "")
     token = await get_valid_token(account)
     until = _utcnow()
-    since = until - timedelta(days=2)
+    since = until - timedelta(days=_SOCIAL_INSIGHTS_SYNC_WINDOW_DAYS - 1)
 
     if platform == "facebook":
         result = await _fetch_facebook_page_insights(token, str(account.get("platform_user_id") or ""), since.isoformat(), until.isoformat())
@@ -19575,20 +19583,30 @@ async def _sync_day_bucketed_platform_account_insights(account: Dict[str, Any]) 
 
 async def _sync_linkedin_account_insights(account: Dict[str, Any]) -> None:
     """LinkedIn's memberCreatorPostAnalytics can be scoped to a date range
-    directly (unlike TikTok), so each sync tick just asks for "since the
-    start of today" and stores that as today's row -- no cumulative
-    snapshot/diffing needed, see _fetch_linkedin_insights."""
+    directly (unlike TikTok), but only returns a single aggregate TOTAL
+    for whatever range it's asked for rather than a day-bucketed series
+    like Facebook/Instagram's -- so the trailing week can't be fetched in
+    one call. Re-fetch each of the trailing _SOCIAL_INSIGHTS_SYNC_WINDOW_DAYS
+    days individually (today plus the prior 6, each its own since/until
+    window) via _fetch_linkedin_insights, which already labels its single
+    daily entry from since_iso, and upsert each as its own row -- no
+    cumulative snapshot/diffing needed, every day's number is a real
+    delta straight from the API."""
     token = await get_valid_token(account)
     today = datetime.now(timezone.utc).date()
-    start_of_today = datetime(today.year, today.month, today.day, tzinfo=timezone.utc)
-    result = await _fetch_linkedin_insights(token, start_of_today.isoformat(), _utcnow().isoformat())
+    now = _utcnow()
+    for days_ago in range(_SOCIAL_INSIGHTS_SYNC_WINDOW_DAYS):
+        day = today - timedelta(days=days_ago)
+        start_of_day = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
+        end_of_day = min(start_of_day + timedelta(days=1), now)
+        result = await _fetch_linkedin_insights(token, start_of_day.isoformat(), end_of_day.isoformat())
 
-    for day_entry in result.get("daily") or []:
-        day = day_entry.get("date")
-        if not day:
-            continue
-        daily_metrics = {key: value for key, value in day_entry.items() if key != "date"}
-        await _upsert_social_insights_daily_row(account["id"], account["user_id"], "linkedin_analytics", day, daily_metrics)
+        for day_entry in result.get("daily") or []:
+            day_str = day_entry.get("date")
+            if not day_str:
+                continue
+            daily_metrics = {key: value for key, value in day_entry.items() if key != "date"}
+            await _upsert_social_insights_daily_row(account["id"], account["user_id"], "linkedin_analytics", day_str, daily_metrics)
 
 
 async def sync_one_social_account_insights(account: Dict[str, Any]) -> None:

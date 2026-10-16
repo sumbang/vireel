@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     AlertTriangle,
     BarChart3,
@@ -375,6 +375,11 @@ function AnalyticsBody({ range, t }) {
     const [insightsLoading, setInsightsLoading] = useState(false);
     const [refreshingAccountId, setRefreshingAccountId] = useState("");
     const [refreshErrorsByAccount, setRefreshErrorsByAccount] = useState({});
+    // Tracks which accounts already had an auto-refresh attempt this
+    // session, so a never-synced account only gets auto-refreshed once
+    // (the backend's own cooldown still protects against repeated manual
+    // clicks, but this avoids firing one on every re-render/effect rerun).
+    const autoRefreshedAccountsRef = useRef(new Set());
 
     useEffect(() => {
         if (!user?.id) return undefined;
@@ -408,6 +413,24 @@ function AnalyticsBody({ range, t }) {
         [accounts]
     );
 
+    const refreshAccount = useCallback(async (accountId) => {
+        if (!user?.id || !accountId) return;
+        setRefreshingAccountId(accountId);
+        setRefreshErrorsByAccount((prev) => ({ ...prev, [accountId]: "" }));
+        try {
+            await refreshInsights(user.id, accountId);
+            const data = await fetchInsights(user.id, accountId, range);
+            setInsightsByAccount((prev) => ({ ...prev, [accountId]: data }));
+        } catch (err) {
+            setRefreshErrorsByAccount((prev) => ({
+                ...prev,
+                [accountId]: err.message || t("dashboard.analyticsRefreshFailed", "Actualisation impossible."),
+            }));
+        } finally {
+            setRefreshingAccountId("");
+        }
+    }, [user?.id, range, t]);
+
     useEffect(() => {
         if (!user?.id || !selectedAccountId) return undefined;
         let cancelled = false;
@@ -415,7 +438,19 @@ function AnalyticsBody({ range, t }) {
             try {
                 setInsightsLoading(true);
                 const data = await fetchInsights(user.id, selectedAccountId, range);
-                if (!cancelled) setInsightsByAccount((prev) => ({ ...prev, [selectedAccountId]: data }));
+                if (cancelled) return;
+                setInsightsByAccount((prev) => ({ ...prev, [selectedAccountId]: data }));
+
+                // Never been synced (fresh connection, or synced before this
+                // periodic-sync/weekly-trends feature existed) -- refresh
+                // right away instead of waiting for the next periodic tick
+                // or a manual click, so opening the dashboard or this
+                // section always shows real data.
+                const neverSynced = data?.supported !== false && !data?.error && !data?.last_synced_at;
+                if (neverSynced && !autoRefreshedAccountsRef.current.has(selectedAccountId)) {
+                    autoRefreshedAccountsRef.current.add(selectedAccountId);
+                    refreshAccount(selectedAccountId);
+                }
             } catch {
                 if (!cancelled) {
                     setInsightsByAccount((prev) => ({
@@ -430,25 +465,9 @@ function AnalyticsBody({ range, t }) {
         return () => {
             cancelled = true;
         };
-    }, [user?.id, selectedAccountId, range]);
+    }, [user?.id, selectedAccountId, range, refreshAccount]);
 
-    const handleRefresh = async () => {
-        if (!user?.id || !selectedAccountId) return;
-        setRefreshingAccountId(selectedAccountId);
-        setRefreshErrorsByAccount((prev) => ({ ...prev, [selectedAccountId]: "" }));
-        try {
-            await refreshInsights(user.id, selectedAccountId);
-            const data = await fetchInsights(user.id, selectedAccountId, range);
-            setInsightsByAccount((prev) => ({ ...prev, [selectedAccountId]: data }));
-        } catch (err) {
-            setRefreshErrorsByAccount((prev) => ({
-                ...prev,
-                [selectedAccountId]: err.message || t("dashboard.analyticsRefreshFailed", "Actualisation impossible."),
-            }));
-        } finally {
-            setRefreshingAccountId("");
-        }
-    };
+    const handleRefresh = () => refreshAccount(selectedAccountId);
 
     if (accountsLoading) {
         return (

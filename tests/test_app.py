@@ -9640,6 +9640,10 @@ def test_get_social_insights_reads_from_storage_not_live_api(monkeypatch):
     assert data["metrics"]["followers"] == 101  # last day's snapshot, not summed
     assert data["last_synced_at"] == "2026-10-10T08:00:00+00:00"
     assert len(data["daily"]) == 2
+    # Lets the frontend disable its own "refresh" button and show a
+    # countdown (last_synced_at + this) instead of hammering POST
+    # /refresh and hitting its 429 over and over.
+    assert data["refresh_cooldown_seconds"] == app.SOCIAL_INSIGHTS_MANUAL_REFRESH_COOLDOWN_SECONDS
 
 
 def test_get_social_insights_surfaces_stored_monetization_snapshot(monkeypatch):

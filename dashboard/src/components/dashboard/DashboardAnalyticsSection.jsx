@@ -195,6 +195,27 @@ function formatLastSynced(isoString, t) {
     );
 }
 
+// Ticks down to 0 once last_synced_at + cooldownSeconds is reached, so the
+// refresh button can disable itself proactively instead of letting the
+// user click it repeatedly and hit POST /refresh's 429 every time.
+function useRefreshCooldownRemaining(lastSyncedAt, cooldownSeconds) {
+    const [remaining, setRemaining] = useState(0);
+
+    useEffect(() => {
+        if (!lastSyncedAt || !cooldownSeconds) {
+            setRemaining(0);
+            return undefined;
+        }
+        const nextAllowedAt = new Date(lastSyncedAt).getTime() + cooldownSeconds * 1000;
+        const tick = () => setRemaining(Math.max(0, Math.ceil((nextAllowedAt - Date.now()) / 1000)));
+        tick();
+        const interval = setInterval(tick, 1000);
+        return () => clearInterval(interval);
+    }, [lastSyncedAt, cooldownSeconds]);
+
+    return remaining;
+}
+
 function ComingSoonCard({ platform, t }) {
     const Icon = PLATFORM_ICONS[platform];
     return (
@@ -238,18 +259,21 @@ function AccountPicker({ accounts, selectedId, onSelect }) {
     );
 }
 
-function RefreshInsightsButton({ onRefresh, refreshing, lastSyncedLabel, t }) {
+function RefreshInsightsButton({ onRefresh, refreshing, lastSyncedLabel, cooldownRemaining, t }) {
+    const onCooldown = cooldownRemaining > 0;
+    const cooldownLabel = t("dashboard.analyticsRefreshCooldown", "Disponible dans {s}s").replace("{s}", cooldownRemaining);
     return (
         <div className="flex items-center justify-end gap-2 text-xs text-slate-500 dark:text-zinc-400">
             {lastSyncedLabel ? <span>{lastSyncedLabel}</span> : null}
             <button
                 type="button"
                 onClick={onRefresh}
-                disabled={refreshing}
+                disabled={refreshing || onCooldown}
+                title={onCooldown ? cooldownLabel : undefined}
                 className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-slate-300 dark:border-white/10 font-semibold text-slate-600 dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-white/5 disabled:opacity-50"
             >
                 <RefreshCw size={12} className={refreshing ? "animate-spin" : ""} />
-                {t("dashboard.analyticsRefresh", "Actualiser")}
+                {onCooldown ? cooldownLabel : t("dashboard.analyticsRefresh", "Actualiser")}
             </button>
         </div>
     );
@@ -274,6 +298,8 @@ function AccountInsightsCard({ insights, loading, refreshing, refreshError, onRe
         return Array.from(keys);
     }, [insights]);
 
+    const cooldownRemaining = useRefreshCooldownRemaining(insights?.last_synced_at, insights?.refresh_cooldown_seconds);
+
     if (loading) {
         return (
             <div className={`${CARD_CLASS} p-8 flex items-center justify-center`}>
@@ -289,7 +315,7 @@ function AccountInsightsCard({ insights, loading, refreshing, refreshError, onRe
     if (insights.error) {
         return (
             <div className="space-y-2">
-                <RefreshInsightsButton onRefresh={onRefresh} refreshing={refreshing} lastSyncedLabel={lastSyncedLabel} t={t} />
+                <RefreshInsightsButton onRefresh={onRefresh} refreshing={refreshing} lastSyncedLabel={lastSyncedLabel} cooldownRemaining={cooldownRemaining} t={t} />
                 <div className={`${CARD_CLASS} p-4 flex items-start gap-2`}>
                     <AlertTriangle size={16} className="text-amber-500 mt-0.5 shrink-0" />
                     <p className="text-sm text-amber-600 dark:text-amber-400">
@@ -303,7 +329,7 @@ function AccountInsightsCard({ insights, loading, refreshing, refreshError, onRe
     return (
         <div className="space-y-4">
             <div className="space-y-1">
-                <RefreshInsightsButton onRefresh={onRefresh} refreshing={refreshing} lastSyncedLabel={lastSyncedLabel} t={t} />
+                <RefreshInsightsButton onRefresh={onRefresh} refreshing={refreshing} lastSyncedLabel={lastSyncedLabel} cooldownRemaining={cooldownRemaining} t={t} />
                 {refreshError ? (
                     <p className="text-right text-xs text-amber-600 dark:text-amber-400">{refreshError}</p>
                 ) : null}

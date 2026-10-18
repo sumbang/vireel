@@ -19744,6 +19744,11 @@ async def get_social_insights(
         "platform": platform,
         "platform_account_name": account.get("platform_account_name"),
         "range": range,
+        # So the frontend can disable the "refresh" button and show a
+        # countdown itself (last_synced_at + this) instead of letting the
+        # user hammer POST /refresh and hit its 429 over and over -- see
+        # refresh_social_insights.
+        "refresh_cooldown_seconds": SOCIAL_INSIGHTS_MANUAL_REFRESH_COOLDOWN_SECONDS,
         **result,
     }
 

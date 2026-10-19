@@ -10020,7 +10020,7 @@ def test_fetch_facebook_monetization_is_hardcoded_unsupported(monkeypatch):
     # this makes no network call at all rather than guess at one.
     app = _import_app_with_stubs(monkeypatch)
 
-    result = asyncio.run(app._fetch_facebook_monetization())
+    result = app._fetch_facebook_monetization()
 
     assert result == {
         "supported": False,

@@ -18973,7 +18973,7 @@ _FACEBOOK_MONETIZATION_UNSUPPORTED = (
 )
 
 
-async def _fetch_facebook_monetization() -> Dict[str, Any]:
+def _fetch_facebook_monetization() -> Dict[str, Any]:
     return {
         "supported": False,
         "available": False,
@@ -18999,7 +18999,7 @@ async def _fetch_facebook_page_insights(access_token: str, page_id: str, since_i
     previous_totals["comments"] = previous_comments_total
 
     followers = await _fetch_facebook_follower_count(access_token, page_id)
-    monetization = await _fetch_facebook_monetization()
+    monetization = _fetch_facebook_monetization()
 
     metrics = _empty_social_insights_metrics()
     metrics["followers"] = followers

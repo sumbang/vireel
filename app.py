@@ -18747,16 +18747,22 @@ def _previous_period_bounds(since_unix: int, until_unix: int) -> Tuple[int, int]
 
 
 # Meta has repeatedly retired individual Page Insights metrics (page_fans,
-# page_impressions, ...) without warning, and each replacement name is a
-# guess against third-party docs until proven against a live token -- so
-# each metric is requested/parsed on its own, and a rejected one is logged
-# by name and skipped rather than zeroing out every other metric too.
+# page_impressions, page_engaged_users, page_video_views_unique, ...)
+# without warning, and each replacement name is a guess against third-party
+# docs until proven against a live token -- so each metric is
+# requested/parsed on its own, and a rejected one is logged by name and
+# skipped rather than zeroing out every other metric too.
+# page_engaged_users and page_video_views_unique were removed outright
+# (not renamed) in Meta's 2026 Page Insights reach/video metrics purge --
+# every live account hits a 400 on both now, with no replacement metric of
+# equivalent meaning, so they're no longer requested at all. "engagement"
+# still gets populated from page_post_engagements alone; Facebook's "views"
+# bucket is simply empty now (it was video-view-specific, not used by any
+# other platform's "views" metric).
 _FACEBOOK_METRIC_TO_BUCKET = {
     "page_media_view": "impressions",  # replaces the retired page_impressions
-    "page_engaged_users": "engagement",
     "page_post_engagements": "engagement",
     "page_views_total": "profile_views",
-    "page_video_views_unique": "views",
     "page_daily_follows": "follows_gained",  # replaces the retired page_fans/page_fan_adds
     "page_daily_unfollows": "follows_lost",  # replaces the retired page_fan_removes
 }
@@ -18949,45 +18955,32 @@ async def _fetch_facebook_comments_daily(
     return daily_by_date, total_comments
 
 
-# Ad-breaks monetization insights are only populated for Pages actually
-# enrolled in Meta's in-stream-ads program -- these metric names are
-# unverified against a live account (see the module note above on Facebook
-# insights metric churn), so each is requested on its own and a
-# rejected/empty one just reads as "no monetization data", not an error.
-_FACEBOOK_MONETIZATION_METRICS = (
-    "page_daily_video_ad_break_ad_impressions",
-    "page_daily_video_ad_break_ad_earnings",
-    "page_daily_video_ad_break_ad_cpm",
+# The page_daily_video_ad_break_ad_* trio this used to read (impressions/
+# earnings/cpm for Pages enrolled in Meta's in-stream-ads program) is gone
+# outright -- every live account 400s on all three now, as part of the same
+# 2026 Page Insights purge that killed page_engaged_users/
+# page_video_views_unique above. Meta's replacement, a single
+# content_monetization_earnings metric (Graph API v23+, "Facebook Content
+# Monetization"), has no publicly verified response schema (units, whether
+# it covers Pages the way the old ad-break metrics did) -- reporting a
+# guessed-at currency figure as real data is worse than reporting none, so
+# this stays hardcoded unsupported rather than guess. Re-verify against a
+# live, monetization-enrolled Page before wiring it back up.
+_FACEBOOK_MONETIZATION_UNSUPPORTED = (
+    "Meta a retire les metriques de monetisation Page Insights sur lesquelles cette fonctionnalite "
+    "reposait (page_daily_video_ad_break_ad_*) ; aucune metrique de remplacement verifiee n'est "
+    "disponible pour le moment."
 )
 
 
-async def _sum_facebook_metric_value(access_token: str, page_id: str, metric: str, since_unix: int, until_unix: int) -> Optional[int]:
-    try:
-        data = await _request_facebook_insights_metrics(access_token, page_id, (metric,), since_unix, until_unix)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.warning("Facebook monetization metric %r rejected for page %s: %s", metric, page_id, exc)
-        return None
-    return sum(int(value_entry.get("value") or 0) for entry in data for value_entry in (entry.get("values") or []))
-
-
-async def _fetch_facebook_monetization(access_token: str, page_id: str, since_unix: int, until_unix: int) -> Dict[str, Any]:
-    ad_impressions = await _sum_facebook_metric_value(access_token, page_id, "page_daily_video_ad_break_ad_impressions", since_unix, until_unix)
-    ad_earnings_cents = await _sum_facebook_metric_value(access_token, page_id, "page_daily_video_ad_break_ad_earnings", since_unix, until_unix)
-    ad_cpm_cents = await _sum_facebook_metric_value(access_token, page_id, "page_daily_video_ad_break_ad_cpm", since_unix, until_unix)
-
-    available = bool(ad_impressions or ad_earnings_cents)
+async def _fetch_facebook_monetization() -> Dict[str, Any]:
     return {
-        "supported": True,
-        "available": available,
-        "reason": None if available else (
-            "Aucune donnee de monetisation disponible (programme de monetisation video non actif "
-            "ou aucune donnee sur cette periode)."
-        ),
-        "ad_impressions": ad_impressions if available else None,
-        "ad_earnings_cents": ad_earnings_cents if available else None,
-        "ad_cpm_cents": ad_cpm_cents if available else None,
+        "supported": False,
+        "available": False,
+        "reason": _FACEBOOK_MONETIZATION_UNSUPPORTED,
+        "ad_impressions": None,
+        "ad_earnings_cents": None,
+        "ad_cpm_cents": None,
     }
 
 
@@ -19006,7 +18999,7 @@ async def _fetch_facebook_page_insights(access_token: str, page_id: str, since_i
     previous_totals["comments"] = previous_comments_total
 
     followers = await _fetch_facebook_follower_count(access_token, page_id)
-    monetization = await _fetch_facebook_monetization(access_token, page_id, since_unix, until_unix)
+    monetization = await _fetch_facebook_monetization()
 
     metrics = _empty_social_insights_metrics()
     metrics["followers"] = followers
@@ -19027,7 +19020,12 @@ _INSTAGRAM_METRIC_TO_BUCKET = {
     "views": "impressions",  # replaces the retired impressions metric
     "reach": "reach",
     "total_interactions": "engagement",  # replaces the retired website_clicks-as-engagement proxy
-    "total_comments": "comments",
+    # "comments", NOT "total_comments" -- the latter is a *media*-level
+    # metric (Instagram Media Insights, Facebook-Login-only, includes
+    # ad-driven comments); this calls the *account*-level /insights edge
+    # (ig_user_id, not a media id), which 400s on it and only accepts the
+    # plain "comments" interaction metric.
+    "comments": "comments",
 }
 _INSTAGRAM_DAILY_METRICS = tuple(_INSTAGRAM_METRIC_TO_BUCKET)
 _INSTAGRAM_TREND_KEYS = ("impressions", "engagement", "comments")

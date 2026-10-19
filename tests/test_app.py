@@ -9843,7 +9843,7 @@ def test_fetch_facebook_page_insights_parses_daily_series(monkeypatch):
                 ],
             },
             {
-                "name": "page_engaged_users",
+                "name": "page_post_engagements",
                 "period": "day",
                 "values": [
                     {"value": 10, "end_time": "2026-09-01T07:00:00+0000"},
@@ -9894,11 +9894,11 @@ def test_fetch_facebook_page_insights_falls_back_to_per_metric_on_rejected_batch
 
     def _per_metric_body(url, params):
         metric = (params or {}).get("metric", "")
-        if metric == "page_engaged_users":
+        if metric == "page_post_engagements":
             return {
                 "data": [
                     {
-                        "name": "page_engaged_users",
+                        "name": "page_post_engagements",
                         "period": "day",
                         "values": [{"value": 5, "end_time": "2026-09-01T07:00:00+0000"}],
                     },
@@ -9944,6 +9944,10 @@ def test_fetch_facebook_page_insights_falls_back_to_per_metric_on_rejected_batch
 
 
 def test_fetch_facebook_page_insights_includes_trends_comments_and_monetization(monkeypatch):
+    # page_engaged_users and page_video_views_unique are no longer
+    # requested at all (Meta retired both outright in its 2026 Page
+    # Insights purge -- every live account 400s on them), so this uses
+    # page_post_engagements as the sole "engagement" source now.
     app = _import_app_with_stubs(monkeypatch)
 
     since_iso = "2026-09-08T00:00:00+00:00"
@@ -9953,28 +9957,17 @@ def test_fetch_facebook_page_insights_includes_trends_comments_and_monetization(
     current_engagement_body = {
         "data": [
             {"name": "page_media_view", "values": [{"value": 200, "end_time": "2026-09-08T07:00:00+0000"}]},
-            {"name": "page_engaged_users", "values": [{"value": 50, "end_time": "2026-09-08T07:00:00+0000"}]},
+            {"name": "page_post_engagements", "values": [{"value": 50, "end_time": "2026-09-08T07:00:00+0000"}]},
         ]
     }
     previous_engagement_body = {
         "data": [
             {"name": "page_media_view", "values": [{"value": 100, "end_time": "2026-09-06T07:00:00+0000"}]},
-            {"name": "page_engaged_users", "values": [{"value": 80, "end_time": "2026-09-06T07:00:00+0000"}]},
+            {"name": "page_post_engagements", "values": [{"value": 80, "end_time": "2026-09-06T07:00:00+0000"}]},
         ]
     }
     posts_body_current = {"data": [{"created_time": "2026-09-08T10:00:00+0000", "comments": {"summary": {"total_count": 4}}}]}
     posts_body_previous = {"data": [{"created_time": "2026-09-06T10:00:00+0000", "comments": {"summary": {"total_count": 10}}}]}
-    monetization_bodies = {
-        "page_daily_video_ad_break_ad_impressions": {
-            "data": [{"name": "page_daily_video_ad_break_ad_impressions", "values": [{"value": 1000, "end_time": "2026-09-08T07:00:00+0000"}]}]
-        },
-        "page_daily_video_ad_break_ad_earnings": {
-            "data": [{"name": "page_daily_video_ad_break_ad_earnings", "values": [{"value": 250, "end_time": "2026-09-08T07:00:00+0000"}]}]
-        },
-        "page_daily_video_ad_break_ad_cpm": {
-            "data": [{"name": "page_daily_video_ad_break_ad_cpm", "values": [{"value": 30, "end_time": "2026-09-08T07:00:00+0000"}]}]
-        },
-    }
     profile_body = {"followers_count": 77}
 
     class _FakeAsyncClient:
@@ -9995,8 +9988,6 @@ def test_fetch_facebook_page_insights_includes_trends_comments_and_monetization(
                 return app.httpx.Response(200, json=body, request=request)
             if url.endswith("/insights"):
                 metric = params.get("metric", "")
-                if metric in monetization_bodies:
-                    return app.httpx.Response(200, json=monetization_bodies[metric], request=request)
                 if "," in metric:
                     body = current_engagement_body if params.get("since") == since_unix else previous_engagement_body
                     return app.httpx.Response(200, json=body, request=request)
@@ -10016,41 +10007,25 @@ def test_fetch_facebook_page_insights_includes_trends_comments_and_monetization(
     assert result["trends"]["engagement"] == {"current": 50, "previous": 80, "change_pct": -37.5, "direction": "down"}
     assert result["trends"]["comments"] == {"current": 4, "previous": 10, "change_pct": -60.0, "direction": "down"}
 
-    assert result["monetization"]["supported"] is True
-    assert result["monetization"]["available"] is True
-    assert result["monetization"]["ad_impressions"] == 1000
-    assert result["monetization"]["ad_earnings_cents"] == 250
-    assert result["monetization"]["ad_cpm_cents"] == 30
+    # No live call is made for monetization at all now -- see
+    # _fetch_facebook_monetization.
+    assert result["monetization"]["supported"] is False
+    assert result["monetization"]["available"] is False
 
 
-def test_fetch_facebook_monetization_reports_unavailable_without_ad_break_data(monkeypatch):
+def test_fetch_facebook_monetization_is_hardcoded_unsupported(monkeypatch):
+    # Meta retired the page_daily_video_ad_break_ad_* trio this relied on
+    # (every live account 400s on all three); its announced replacement,
+    # content_monetization_earnings, has no verified response schema, so
+    # this makes no network call at all rather than guess at one.
     app = _import_app_with_stubs(monkeypatch)
 
-    class _FakeAsyncClient:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return False
-
-        async def get(self, url, params=None):
-            request = app.httpx.Request("GET", url)
-            return app.httpx.Response(200, json={"data": []}, request=request)
-
-    monkeypatch.setattr(app.httpx, "AsyncClient", _FakeAsyncClient)
-
-    result = asyncio.run(app._fetch_facebook_monetization("token-1", "page-1", 1000, 2000))
+    result = app._fetch_facebook_monetization()
 
     assert result == {
-        "supported": True,
+        "supported": False,
         "available": False,
-        "reason": (
-            "Aucune donnee de monetisation disponible (programme de monetisation video non actif "
-            "ou aucune donnee sur cette periode)."
-        ),
+        "reason": app._FACEBOOK_MONETIZATION_UNSUPPORTED,
         "ad_impressions": None,
         "ad_earnings_cents": None,
         "ad_cpm_cents": None,
@@ -10068,14 +10043,14 @@ def test_fetch_instagram_insights_includes_trends_and_unsupported_monetization(m
         "data": [
             {"name": "views", "values": [{"value": 300, "end_time": "2026-09-08T07:00:00+0000"}]},
             {"name": "total_interactions", "values": [{"value": 60, "end_time": "2026-09-08T07:00:00+0000"}]},
-            {"name": "total_comments", "values": [{"value": 15, "end_time": "2026-09-08T07:00:00+0000"}]},
+            {"name": "comments", "values": [{"value": 15, "end_time": "2026-09-08T07:00:00+0000"}]},
         ]
     }
     previous_body = {
         "data": [
             {"name": "views", "values": [{"value": 250, "end_time": "2026-09-06T07:00:00+0000"}]},
             {"name": "total_interactions", "values": [{"value": 90, "end_time": "2026-09-06T07:00:00+0000"}]},
-            {"name": "total_comments", "values": [{"value": 20, "end_time": "2026-09-06T07:00:00+0000"}]},
+            {"name": "comments", "values": [{"value": 20, "end_time": "2026-09-06T07:00:00+0000"}]},
         ]
     }
     profile_body = {"followers_count": 555}

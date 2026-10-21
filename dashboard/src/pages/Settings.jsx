@@ -198,7 +198,7 @@ function LinkedinMultiAccountInfoModal({ onClose, t }) {
         <p className="text-sm text-slate-600 dark:text-zinc-300 mb-3">
           {t(
             'settings.linkedinMultiAccountIntro',
-            "Votre offre autorise plusieurs profils LinkedIn, mais LinkedIn ne propose pas de sélecteur de compte dans sa fenêtre de connexion : si vous êtes déjà connecté, il reprend automatiquement ce même compte."
+            "Votre offre autorise plusieurs profils LinkedIn, mais LinkedIn ne propose pas de sélecteur de compte dans sa fenêtre de connexion : si ce navigateur a déjà une session linkedin.com ouverte, LinkedIn réutilise automatiquement ce compte, sans rien demander."
           )}
         </p>
 
@@ -206,14 +206,14 @@ function LinkedinMultiAccountInfoModal({ onClose, t }) {
           <li>
             {t(
               'settings.linkedinMultiAccountStep1',
-              'Déconnectez-vous de LinkedIn dans ce navigateur (ou ouvrez une fenêtre de navigation privée).'
+              'Ouvrez une fenêtre de navigation privée (le plus simple), ou déconnectez-vous de linkedin.com dans ce navigateur -- cela ne touche pas aux comptes déjà connectés à Vireel.'
             )}
           </li>
-          <li>{t('settings.linkedinMultiAccountStep2', 'Revenez ici et cliquez sur "Connecter".')}</li>
+          <li>{t('settings.linkedinMultiAccountStep2', 'Dans cette fenêtre, cliquez ici sur "Connecter".')}</li>
           <li>
             {t(
               'settings.linkedinMultiAccountStep3',
-              'Connectez-vous avec le compte LinkedIn que vous souhaitez ajouter.'
+              'Sur la page LinkedIn qui s\'ouvre, connectez-vous avec le compte LinkedIn à ajouter.'
             )}
           </li>
         </ol>

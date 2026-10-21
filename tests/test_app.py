@@ -10210,6 +10210,21 @@ def test_connect_tiktok_forces_authorization_screen(monkeypatch):
     assert "disable_auto_auth=1" in result["auth_url"]
 
 
+def test_connect_instagram_forces_reauth_screen(monkeypatch):
+    # Same bug as TikTok's above, same fix shape: Business Login for
+    # Instagram otherwise lets an already-logged-in browser session
+    # straight through with no account picker, so "Connecter" always
+    # reuses the same Instagram account. force_reauth=true is Meta's own
+    # documented parameter to force the login screen back.
+    app = _import_app_with_stubs(monkeypatch)
+    monkeypatch.setitem(app.PLATFORM_CONFIG["instagram"], "client_id", "test-app-id")
+    monkeypatch.setitem(app.PLATFORM_CONFIG["instagram"], "client_secret", "test-app-secret")
+
+    result = app.connect("instagram", None, "u1")
+
+    assert "force_reauth=true" in result["auth_url"]
+
+
 def test_extract_linkedin_metric_value_sums_value_and_count_fields(monkeypatch):
     app = _import_app_with_stubs(monkeypatch)
     elements = [{"value": 10}, {"count": 5}, {"value": 2.0}, {"other": "ignored"}]

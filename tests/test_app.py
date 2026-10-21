@@ -10195,6 +10195,21 @@ def test_fetch_tiktok_insights_skips_calls_for_ungranted_scopes(monkeypatch):
     assert result["daily"] == []
 
 
+def test_connect_tiktok_forces_authorization_screen(monkeypatch):
+    # Without disable_auto_auth=1, TikTok silently skips the authorization
+    # screen for an already-valid browser session and reissues a code for
+    # whichever account is currently logged in there -- no account picker
+    # is ever shown, so "Connecter" in Settings always reuses the same
+    # TikTok account. Regression test for that bug report.
+    app = _import_app_with_stubs(monkeypatch)
+    monkeypatch.setitem(app.PLATFORM_CONFIG["tiktok"], "client_id", "test-client-key")
+    monkeypatch.setitem(app.PLATFORM_CONFIG["tiktok"], "client_secret", "test-client-secret")
+
+    result = app.connect("tiktok", None, "u1")
+
+    assert "disable_auto_auth=1" in result["auth_url"]
+
+
 def test_extract_linkedin_metric_value_sums_value_and_count_fields(monkeypatch):
     app = _import_app_with_stubs(monkeypatch)
     elements = [{"value": 10}, {"count": 5}, {"value": 2.0}, {"other": "ignored"}]

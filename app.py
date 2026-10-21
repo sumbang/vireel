@@ -17370,6 +17370,14 @@ def connect(platform: str, request: Request, user_id: Annotated[str, Depends(get
         params["code_challenge"] = code_challenge
         params["code_challenge_method"] = "S256"
         params["scope"] = ",".join(config["scopes"])  # TikTok utilise scope séparé par des espaces
+        # Sans ça, TikTok saute silencieusement l'ecran d'autorisation pour une
+        # session navigateur deja valide et renvoie direct un code pour le
+        # compte TikTok actuellement connecte dans ce navigateur -- aucun
+        # choix de compte n'est propose, donc "Connecter" reprend toujours le
+        # meme compte. disable_auto_auth=1 force l'affichage de l'ecran
+        # d'autorisation (et donc la possibilite de changer de compte) a
+        # chaque connexion, meme avec une session valide.
+        params["disable_auto_auth"] = "1"
 
     # Signe le payload → devient le state envoyé à la plateforme
     state = _oauth_serializer.dumps(state_payload)

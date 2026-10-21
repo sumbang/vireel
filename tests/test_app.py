@@ -2410,11 +2410,13 @@ def test_reset_caption_style_history_falls_back_without_default_version(monkeypa
 
 def test_resolve_accounts_for_publish_rejects_instagram_for_anonymous_story_set(monkeypatch):
     # Anonymous stories may only be published to Facebook/LinkedIn accounts
-    # (the user's explicit ask), unlike reels/captions' full platform list.
+    # (the user's explicit ask), unlike reels/captions' full platform list
+    # and unlike the composer's own _SOCIAL_POST_PLATFORMS (which now also
+    # includes Instagram/TikTok/YouTube).
     app = _import_app_with_stubs(monkeypatch)
     monkeypatch.setattr(app, "_get_social_account_by_id", AsyncMock(return_value={"id": "acct-1", "platform": "instagram"}))
 
-    coro = app._resolve_accounts_for_publish("u1", ["acct-1"], app._SOCIAL_POST_PLATFORMS)
+    coro = app._resolve_accounts_for_publish("u1", ["acct-1"], app._ANONYMOUS_STORY_PLATFORMS)
     with pytest.raises(app.HTTPException) as exc:
         asyncio.run(coro)
     assert exc.value.status_code == 400
@@ -8936,8 +8938,11 @@ def test_resolve_accounts_for_publish_rejects_unowned_or_missing_account(monkeyp
 
 
 def test_resolve_accounts_for_publish_rejects_unsupported_platform(monkeypatch):
+    # tiktok is now a valid _SOCIAL_POST_PLATFORMS target (composer opened
+    # up to Instagram/TikTok/YouTube) -- pinterest stays genuinely
+    # unsupported by any publish surface.
     app = _import_app_with_stubs(monkeypatch)
-    monkeypatch.setattr(app, "_get_social_account_by_id", AsyncMock(return_value={"id": "acct-1", "platform": "tiktok"}))
+    monkeypatch.setattr(app, "_get_social_account_by_id", AsyncMock(return_value={"id": "acct-1", "platform": "pinterest"}))
 
     coro = app._resolve_accounts_for_publish("u1", ["acct-1"], app._SOCIAL_POST_PLATFORMS)
     with pytest.raises(app.HTTPException) as exc_info:
@@ -9003,7 +9008,7 @@ def test_create_social_post_rejects_unsupported_platform_account(monkeypatch):
     monkeypatch.setattr(app, "_assert_user_has_active_subscription_for_publish", AsyncMock())
     monkeypatch.setattr(app, "_assert_user_can_publish", AsyncMock())
     monkeypatch.setattr(app, "_get_user_max_comments_per_post", AsyncMock(return_value=99))
-    monkeypatch.setattr(app, "_get_social_account_by_id", AsyncMock(return_value={"id": "acct-1", "platform": "tiktok"}))
+    monkeypatch.setattr(app, "_get_social_account_by_id", AsyncMock(return_value={"id": "acct-1", "platform": "pinterest"}))
 
     with TestClient(app.app) as client:
         resp = client.post(
@@ -9012,6 +9017,69 @@ def test_create_social_post_rejects_unsupported_platform_account(monkeypatch):
             headers=_auth_headers("u1"),
         )
     assert resp.status_code == 400
+
+
+def test_create_social_post_rejects_text_only_for_instagram_tiktok_youtube(monkeypatch):
+    # Instagram/TikTok/YouTube accounts are valid composer targets (see
+    # _SOCIAL_POST_PLATFORMS), but none of the three accept a text-only
+    # post -- _validate_social_post_media_for_accounts must reject this
+    # up front rather than only after _PLATFORM_HANDLERS fails.
+    app = _import_app_with_stubs(monkeypatch)
+    monkeypatch.setattr(app, "_assert_user_has_active_subscription_for_publish", AsyncMock())
+    monkeypatch.setattr(app, "_assert_user_can_publish", AsyncMock())
+    monkeypatch.setattr(app, "_get_user_max_comments_per_post", AsyncMock(return_value=99))
+
+    for platform in ("instagram", "tiktok", "youtube"):
+        monkeypatch.setattr(app, "_get_social_account_by_id", AsyncMock(return_value={"id": "acct-1", "platform": platform}))
+        with TestClient(app.app) as client:
+            resp = client.post(
+                "/api/social/posts",
+                json={"text": "Hello", "account_ids": ["acct-1"]},
+                headers=_auth_headers("u1"),
+            )
+        assert resp.status_code == 400, platform
+        assert "texte seul" in resp.json()["detail"], platform
+
+
+def test_create_social_post_rejects_photo_for_youtube(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+    monkeypatch.setattr(app, "_assert_user_has_active_subscription_for_publish", AsyncMock())
+    monkeypatch.setattr(app, "_assert_user_can_publish", AsyncMock())
+    monkeypatch.setattr(app, "_get_user_max_comments_per_post", AsyncMock(return_value=99))
+    monkeypatch.setattr(app, "_get_social_account_by_id", AsyncMock(return_value={"id": "acct-1", "platform": "youtube"}))
+
+    with TestClient(app.app) as client:
+        resp = client.post(
+            "/api/social/posts",
+            json={"text": "Hello", "account_ids": ["acct-1"], "media_url": "https://example.com/photo.jpg", "media_type": "image"},
+            headers=_auth_headers("u1"),
+        )
+    assert resp.status_code == 400
+    assert "video" in resp.json()["detail"]
+
+
+def test_create_social_post_allows_video_for_instagram_tiktok_youtube(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+    monkeypatch.setattr(app, "_assert_user_has_active_subscription_for_publish", AsyncMock())
+    monkeypatch.setattr(app, "_assert_user_can_publish", AsyncMock())
+    monkeypatch.setattr(app, "_get_user_max_comments_per_post", AsyncMock(return_value=99))
+    monkeypatch.setattr(app, "_resolve_user_job_priority", AsyncMock(return_value=1))
+    monkeypatch.setattr(app, "is_supabase_configured", lambda: True)
+    monkeypatch.setattr(app, "get_valid_token", AsyncMock(return_value="page-token"))
+    monkeypatch.setattr(app, "publish_post", AsyncMock(return_value={"id": "post-1"}))
+    monkeypatch.setattr(app, "_insert_publish_job", AsyncMock(return_value="job-1"))
+    monkeypatch.setattr(app, "_update_publish_job_status", AsyncMock())
+
+    for platform in ("instagram", "tiktok", "youtube"):
+        monkeypatch.setattr(app, "_get_social_account_by_id", AsyncMock(return_value=_social_post_account(platform)))
+        with TestClient(app.app) as client:
+            resp = client.post(
+                "/api/social/posts",
+                json={"text": "Hello", "account_ids": ["acct-1"], "media_url": "https://example.com/video.mp4", "media_type": "video"},
+                headers=_auth_headers("u1"),
+            )
+        assert resp.status_code == 200, platform
+        assert resp.json()["results"]["acct-1"]["success"] is True, platform
 
 
 def test_create_social_post_publishes_now_and_posts_comments(monkeypatch):

@@ -9206,7 +9206,15 @@ def _resolve_request_user_id(explicit_user_id: Optional[str], user_id: str) -> s
 
 
 _SHARE_PLATFORMS = {"tiktok", "instagram", "youtube", "facebook", "linkedin"}
-_SOCIAL_POST_PLATFORMS = {"facebook", "linkedin"}
+# Instagram/TikTok/YouTube accounts are valid composer targets too -- their
+# _PLATFORM_HANDLERS entries already enforce what each platform actually
+# accepts (video+photo for Instagram/TikTok, video-only for YouTube, no
+# text-only posts for any of the three); see
+# _validate_social_post_media_for_accounts for the up-front check that
+# surfaces that as a clear error before a publish_jobs row is even created,
+# rather than only after the fact.
+_SOCIAL_POST_PLATFORMS = {"facebook", "linkedin", "instagram", "tiktok", "youtube"}
+_SOCIAL_POST_VIDEO_ONLY_PLATFORMS = {"youtube"}
 
 
 async def _resolve_accounts_for_publish(
@@ -13222,7 +13230,12 @@ async def regenerate_anonymous_story_endpoint(story_id: str, user_id: Annotated[
 # explicitly asked for ("la publication dois se faire entre facebook et
 # Linkedin") -- unlike reels/captions, which fan out to whatever the
 # account has connected among tiktok/instagram/youtube/facebook/linkedin.
-# Reuses _SOCIAL_POST_PLATFORMS (the composer's own set is identical).
+# Anonymous stories are always text-only (no media attach step exists in
+# their flow, see AnonymousStoryPublishModal.jsx's own PUBLISH_PLATFORMS),
+# so this stays its own, narrower set even now that _SOCIAL_POST_PLATFORMS
+# (the composer's) includes Instagram/TikTok/YouTube -- those three never
+# accept a text-only post.
+_ANONYMOUS_STORY_PLATFORMS = {"facebook", "linkedin"}
 
 
 async def _publish_anonymous_story_now(
@@ -13327,7 +13340,7 @@ async def publish_anonymous_story_endpoint(
     if not text_value:
         raise HTTPException(status_code=400, detail="Story has no generated text to publish yet")
 
-    accounts = await _resolve_accounts_for_publish(user_id, payload.account_ids, _SOCIAL_POST_PLATFORMS)
+    accounts = await _resolve_accounts_for_publish(user_id, payload.account_ids, _ANONYMOUS_STORY_PLATFORMS)
     await _assert_user_can_publish(user_id, len(accounts))
     publish_priority = await _resolve_user_job_priority(user_id)
     scheduled_for, is_scheduled = _resolve_anonymous_story_schedule(payload)
@@ -13664,6 +13677,32 @@ async def _publish_or_schedule_social_post(
     )
 
 
+_SOCIAL_POST_PLATFORM_DISPLAY_NAMES = {"instagram": "Instagram", "tiktok": "TikTok", "youtube": "YouTube"}
+
+
+def _validate_social_post_media_for_accounts(
+    accounts: List[Dict[str, Any]], media_url: Optional[str], media_type: Optional[str],
+) -> None:
+    """Up-front equivalent of what _PLATFORM_HANDLERS' Instagram/TikTok/
+    YouTube handlers already enforce on their own (see
+    _publish_instagram_platform/_publish_tiktok_platform/
+    _resolve_youtube_video_path) -- raises a clear 400 naming the platform
+    before a publish_jobs row is even created, instead of only after a
+    per-account publish attempt has already failed."""
+    for account in accounts:
+        platform = str(account.get("platform") or "")
+        display_name = _SOCIAL_POST_PLATFORM_DISPLAY_NAMES.get(platform)
+        if display_name is None:
+            continue  # Facebook/LinkedIn accept text-only posts, nothing to check.
+        if not media_url:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{display_name} n'accepte pas les publications texte seul : ajoutez une photo ou une video.",
+            )
+        if platform in _SOCIAL_POST_VIDEO_ONLY_PLATFORMS and media_type != "video":
+            raise HTTPException(status_code=400, detail=f"{display_name} n'accepte que les publications video.")
+
+
 @app.post("/api/social/posts", responses={400: {"description": "Bad Request"}, 401: {"description": "Unauthorized"}, 402: {"description": "Payment Required"}, 403: {"description": "Forbidden"}, 404: {"description": "Not Found"}, 502: {"description": "Bad Gateway"}, 503: {"description": "Service Unavailable"}})
 async def create_social_post(payload: CreateSocialPostRequest, user_id: Annotated[str, Depends(get_user_id_header)]):
     await _assert_user_has_active_subscription_for_publish(user_id)
@@ -13681,6 +13720,7 @@ async def create_social_post(payload: CreateSocialPostRequest, user_id: Annotate
 
     text_value = (payload.text or "").strip()
     media_url = (payload.media_url or "").strip() or None
+    media_type = payload.media_type if media_url else None
     # Meta's own APIs only require text on a plain text-only post (Graph API
     # rejects an empty /feed message with no attachment) -- a photo or video
     # carries the caption/message as optional, so text is only mandatory
@@ -13689,13 +13729,13 @@ async def create_social_post(payload: CreateSocialPostRequest, user_id: Annotate
         raise HTTPException(status_code=400, detail="text is required when no media is attached")
 
     accounts = await _resolve_accounts_for_publish(user_id, payload.account_ids, _SOCIAL_POST_PLATFORMS)
+    _validate_social_post_media_for_accounts(accounts, media_url, media_type)
     await _assert_user_can_publish(user_id, len(accounts))
     publish_priority = await _resolve_user_job_priority(user_id)
     scheduled_for = _resolve_scheduled_datetime(payload.scheduled_date, payload.timezone)
     if payload.scheduled_date and not scheduled_for:
         raise HTTPException(status_code=400, detail=_INVALID_SCHEDULED_DATE)
     is_scheduled = bool(scheduled_for and scheduled_for > _utcnow())
-    media_type = payload.media_type if media_url else None
     # A background can't be combined with a photo/video (Facebook drops the
     # background style the moment media is attached), so only default to
     # the first preset when there's no attached media at all.

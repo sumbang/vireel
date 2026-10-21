@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { X, Loader2, Share2, Calendar, Clock, Facebook, Linkedin, CheckCircle, AlertCircle, Check, Ban, Plus, Trash2, Link as LinkIcon, Image as ImageIcon } from "lucide-react";
+import { X, Loader2, Share2, Calendar, Clock, Facebook, Linkedin, Instagram, Youtube, Twitch, CheckCircle, AlertCircle, Check, Ban, Plus, Trash2, Link as LinkIcon, Image as ImageIcon } from "lucide-react";
 import { getApiUrl } from "../config";
 import { getAuthHeaders } from "../lib/apiAuth";
 import { describePlatformPublishError } from "../lib/anonymousStories";
@@ -9,18 +9,49 @@ import { useTranslation } from "../state/LanguageContext";
 
 // "Faire une publication": a user-authored post (optionally with a
 // Facebook-only colored background, same catalog as anonymous stories --
-// see AnonymousStoryPublishModal) published to Facebook and/or LinkedIn,
-// together with zero or more follow-up comments posted by the connected
-// account itself right after the post goes live (see POST /api/social/posts
-// in app.py). Unlike AnonymousStoryPublishModal this modal is
+// see AnonymousStoryPublishModal) published to any of Facebook, LinkedIn,
+// Instagram, TikTok and YouTube, together with zero or more follow-up
+// comments posted by the connected account itself right after the post
+// goes live (see POST /api/social/posts in app.py). Instagram/TikTok/
+// YouTube never accept a text-only post (Instagram/TikTok need a photo or
+// video, YouTube needs a video specifically -- see
+// isAccountMediaCompatible below and _validate_social_post_media_for_accounts
+// in app.py), unlike Facebook/LinkedIn which also support a background-only
+// or plain-text post. Unlike AnonymousStoryPublishModal this modal is
 // self-contained: it fetches its own background catalog rather than being
 // controlled by the parent page, since SocialPublicationsPage has no other
 // reason to hold that state.
 
 const NO_BACKGROUND_ID = "none";
-const PUBLISH_PLATFORMS = ["facebook", "linkedin"];
-const PLATFORM_ICONS = { facebook: Facebook, linkedin: Linkedin };
-const PLATFORM_LABELS = { facebook: "Facebook", linkedin: "LinkedIn" };
+const PUBLISH_PLATFORMS = ["facebook", "linkedin", "instagram", "tiktok", "youtube"];
+// Twitch stands in for TikTok here, same placeholder lucide-react uses in
+// Settings.jsx -- lucide has no TikTok glyph.
+const PLATFORM_ICONS = { facebook: Facebook, linkedin: Linkedin, instagram: Instagram, tiktok: Twitch, youtube: Youtube };
+const PLATFORM_LABELS = { facebook: "Facebook", linkedin: "LinkedIn", instagram: "Instagram", tiktok: "TikTok", youtube: "YouTube" };
+
+// Mirrors the backend's _PLATFORM_HANDLERS (see
+// _validate_social_post_media_for_accounts in app.py): Instagram/TikTok
+// accept a photo or a video but never a text-only post; YouTube accepts
+// video only. Used to disable an incompatible account's checkbox instead
+// of letting the user pick a combination guaranteed to fail server-side.
+const MEDIA_REQUIRED_PLATFORMS = ["instagram", "tiktok", "youtube"];
+const VIDEO_ONLY_PLATFORMS = ["youtube"];
+
+function isAccountMediaCompatible(platform, mediaUrl, mediaType) {
+    if (!MEDIA_REQUIRED_PLATFORMS.includes(platform)) return true;
+    if (!mediaUrl) return false;
+    if (VIDEO_ONLY_PLATFORMS.includes(platform)) return mediaType === "video";
+    return true;
+}
+
+// Follow-up comments (posted by the connected account right after the post
+// goes live) only ever actually post on Facebook -- LinkedIn's comment
+// attempts are silently skipped server-side (restricted API access, see
+// _post_comments_sequence in app.py) and Instagram/TikTok/YouTube have no
+// comment-posting support at all (_post_platform_comment 404s for them).
+// Whichever reason applies, the observable result is the same: no comment
+// ever appears, so the UI treats all of them the same way.
+const COMMENT_SUPPORTED_PLATFORMS = ["facebook"];
 
 function backgroundGradient(preset) {
     const colors = preset?.colors && preset.colors.length ? preset.colors : ["#0f2027"];
@@ -159,24 +190,42 @@ export default function SocialPostComposerModal({ isOpen, onClose, onCreated }) 
         return next;
     }, [socialAccounts]);
 
+    // An account that was selected while compatible (e.g. a YouTube
+    // account with a video attached) must get deselected the moment the
+    // media is removed or swapped for a photo, instead of silently staying
+    // checked and only failing once the user hits publish.
+    useEffect(() => {
+        setSelectedAccountIds((prev) => {
+            let changed = false;
+            const next = { ...prev };
+            for (const account of socialAccounts) {
+                if (next[account.id] && !isAccountMediaCompatible(account.platform, mediaUrl, mediaType)) {
+                    next[account.id] = false;
+                    changed = true;
+                }
+            }
+            return changed ? next : prev;
+        });
+    }, [mediaUrl, mediaType, socialAccounts]);
+
     if (!isOpen) return null;
 
     const selectedPreset = backgrounds.find((preset) => preset.id === backgroundId);
     const hasBackground = Boolean(selectedPreset) && selectedPreset.id !== NO_BACKGROUND_ID;
 
-    // LinkedIn's Social Actions (comments) API requires a restricted
-    // partner product (Marketing Developer Platform) that this app's
-    // standard "Share on LinkedIn" access doesn't include -- every
-    // comment attempt on a LinkedIn account fails with a 403
-    // ACCESS_DENIED (partnerApiSocialActions.CREATE). Comments are hidden
-    // entirely once only LinkedIn accounts are selected, instead of
-    // letting the user add comments that are guaranteed to fail; a mix of
-    // LinkedIn + another platform still shows comments (they'll post to
-    // the non-LinkedIn account(s)) with a note about the LinkedIn gap.
+    // Comments are hidden entirely once no selected account can actually
+    // receive one (see COMMENT_SUPPORTED_PLATFORMS above), instead of
+    // letting the user write comments that are guaranteed to never post. A
+    // mix that includes a Facebook account still shows comments (they'll
+    // post to the Facebook account(s)) with a note naming which of the
+    // other selected platforms won't get them.
     const selectedAccountsList = socialAccounts.filter((account) => selectedAccountIds[account.id]);
-    const hasNonLinkedInSelected = selectedAccountsList.some((account) => account.platform !== "linkedin");
-    const hasLinkedInSelected = selectedAccountsList.some((account) => account.platform === "linkedin");
-    const commentsAvailable = selectedAccountsList.length === 0 || hasNonLinkedInSelected;
+    const commentIncapableSelected = selectedAccountsList.filter(
+        (account) => !COMMENT_SUPPORTED_PLATFORMS.includes(account.platform)
+    );
+    const hasCommentCapableSelected = selectedAccountsList.length > commentIncapableSelected.length;
+    const commentsAvailable = selectedAccountsList.length === 0 || hasCommentCapableSelected;
+    const commentIncapablePlatformLabels = [...new Set(commentIncapableSelected.map((account) => PLATFORM_LABELS[account.platform] || account.platform))];
 
     const handleAccountToggle = (accountId, checked) => {
         setSelectedAccountIds((prev) => ({ ...prev, [accountId]: checked }));
@@ -526,7 +575,7 @@ export default function SocialPostComposerModal({ isOpen, onClose, onCreated }) 
                         </label>
                         {socialAccounts.length === 0 ? (
                             <p className="text-xs text-slate-400 dark:text-zinc-500">
-                                {t("social.postComposerNoAccounts", "Aucun compte Facebook/LinkedIn connecte. Connectez-en un dans Parametres.")}
+                                {t("social.postComposerNoAccountsAny", "Aucun compte connecte. Connectez-en un dans Parametres.")}
                             </p>
                         ) : (
                             <div className="space-y-3">
@@ -534,22 +583,36 @@ export default function SocialPostComposerModal({ isOpen, onClose, onCreated }) 
                                     const accounts = accountsByPlatform[platform] || [];
                                     if (accounts.length === 0) return null;
                                     const Icon = PLATFORM_ICONS[platform];
+                                    const platformLabel = t(`social.${platform}`, PLATFORM_LABELS[platform]);
+                                    const compatible = isAccountMediaCompatible(platform, mediaUrl, mediaType);
                                     return (
                                         <div key={platform}>
                                             <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-zinc-500 mb-1">
-                                                <Icon size={13} /> {t(`social.${platform}`, PLATFORM_LABELS[platform])}
+                                                <Icon size={13} /> {platformLabel}
                                             </div>
+                                            {!compatible ? (
+                                                <p className="mb-1 text-[11px] text-amber-600 dark:text-amber-400">
+                                                    {VIDEO_ONLY_PLATFORMS.includes(platform)
+                                                        ? t("social.postComposerVideoOnlyPlatform", "{{platform}} n'accepte que les publications video.", { platform: platformLabel })
+                                                        : t("social.postComposerMediaRequiredPlatform", "Ajoutez une photo ou une video pour publier sur {{platform}}.", { platform: platformLabel })}
+                                                </p>
+                                            ) : null}
                                             <div className="grid grid-cols-1 gap-2">
                                                 {accounts.map((account) => (
                                                     <label
                                                         key={account.id}
-                                                        className="flex items-center gap-3 p-3 bg-slate-100 dark:bg-white/5 rounded-lg cursor-pointer hover:bg-slate-200 dark:hover:bg-white/10 transition-colors border border-slate-200 dark:border-white/5"
+                                                        className={`flex items-center gap-3 p-3 rounded-lg border transition-colors ${
+                                                            compatible
+                                                                ? "bg-slate-100 dark:bg-white/5 cursor-pointer hover:bg-slate-200 dark:hover:bg-white/10 border-slate-200 dark:border-white/5"
+                                                                : "bg-slate-50 dark:bg-white/[0.02] border-slate-200 dark:border-white/5 opacity-50 cursor-not-allowed"
+                                                        }`}
                                                     >
                                                         <input
                                                             type="checkbox"
                                                             checked={Boolean(selectedAccountIds[account.id])}
+                                                            disabled={!compatible}
                                                             onChange={(e) => handleAccountToggle(account.id, e.target.checked)}
-                                                            className="w-4 h-4 rounded border-zinc-600 bg-black/50 text-primary focus:ring-primary"
+                                                            className="w-4 h-4 rounded border-zinc-600 bg-black/50 text-primary focus:ring-primary disabled:opacity-50"
                                                         />
                                                         <span className="text-sm text-slate-800 dark:text-white truncate">
                                                             {account.platform_account_name || account.platform}
@@ -655,8 +718,8 @@ export default function SocialPostComposerModal({ isOpen, onClose, onCreated }) 
                             </label>
                             <p className="text-xs text-slate-400 dark:text-zinc-500">
                                 {t(
-                                    "social.postComposerCommentsUnavailableLinkedin",
-                                    "Indisponible sur LinkedIn : l'API de LinkedIn ne permet pas de publier des commentaires avec ce type d'acces. Selectionnez aussi un compte Facebook pour ajouter des commentaires."
+                                    "social.postComposerCommentsUnavailable",
+                                    "Indisponible : aucune plateforme selectionnee ne permet d'ajouter des commentaires via l'API. Selectionnez aussi un compte Facebook pour en ajouter."
                                 )}
                             </p>
                         </div>
@@ -674,11 +737,12 @@ export default function SocialPostComposerModal({ isOpen, onClose, onCreated }) 
                                 <Plus size={14} /> {t("social.postComposerAddComment", "Ajouter un commentaire")}
                             </button>
                         </div>
-                        {hasLinkedInSelected ? (
+                        {commentIncapablePlatformLabels.length > 0 ? (
                             <p className="mb-2 text-[11px] text-slate-500 dark:text-zinc-400">
                                 {t(
                                     "social.postComposerCommentsFacebookOnly",
-                                    "Facebook uniquement : ces commentaires ne seront pas publies sur le(s) compte(s) LinkedIn selectionne(s)."
+                                    "Facebook uniquement : ces commentaires ne seront pas publies sur : {{platforms}}.",
+                                    { platforms: commentIncapablePlatformLabels.join(", ") }
                                 )}
                             </p>
                         ) : null}

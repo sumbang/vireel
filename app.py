@@ -17361,6 +17361,18 @@ def connect(platform: str, request: Request, user_id: Annotated[str, Depends(get
         # dialog again, including newly added scopes.
         params["auth_type"] = "rerequest"
 
+    if key == "instagram":
+        # Same class of bug as TikTok's disable_auto_auth above: Business
+        # Login for Instagram otherwise lets an already-logged-in browser
+        # session straight through with no login/account screen at all,
+        # so "Connecter" in Settings always reuses whichever Instagram
+        # account is currently logged into that browser. force_reauth=true
+        # is Meta's own documented parameter for this exact flow -- it
+        # makes the user re-enter their Instagram professional account
+        # credentials even with a valid session, which is what actually
+        # surfaces the "log in as a different account" option.
+        params["force_reauth"] = "true"
+
     if key == "tiktok":
         code_verifier, code_challenge = generate_pkce_pair()
         state_payload["code_verifier"] = code_verifier
@@ -17370,6 +17382,25 @@ def connect(platform: str, request: Request, user_id: Annotated[str, Depends(get
         params["code_challenge"] = code_challenge
         params["code_challenge_method"] = "S256"
         params["scope"] = ",".join(config["scopes"])  # TikTok utilise scope séparé par des espaces
+        # Sans ça, TikTok saute silencieusement l'ecran d'autorisation pour une
+        # session navigateur deja valide et renvoie direct un code pour le
+        # compte TikTok actuellement connecte dans ce navigateur -- aucun
+        # choix de compte n'est propose, donc "Connecter" reprend toujours le
+        # meme compte. disable_auto_auth=1 force l'affichage de l'ecran
+        # d'autorisation (et donc la possibilite de changer de compte) a
+        # chaque connexion, meme avec une session valide.
+        params["disable_auto_auth"] = "1"
+
+    # LinkedIn ("linkedin" and "linkedin_analytics") has the exact same
+    # bug -- its own docs say the authorization screen is bypassed
+    # entirely whenever the member already has a grant for the requested
+    # scopes, straight back to redirect_uri with no choice offered -- but
+    # unlike the platforms above, LinkedIn has no documented parameter
+    # (no prompt=login/select_account equivalent) to force it back. The
+    # only workaround is on the user's side: log out of LinkedIn (or use
+    # a private window) before clicking "Connecter" for a different
+    # account. Re-check LinkedIn's OAuth docs before assuming this is
+    # still true.
 
     # Signe le payload → devient le state envoyé à la plateforme
     state = _oauth_serializer.dumps(state_payload)

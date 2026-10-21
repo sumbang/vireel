@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   User, Mail, Copy, Check, Moon, Sun, Monitor, Linkedin, Twitch, Youtube, Facebook, Instagram,
   CreditCardIcon, History, Plus, Minus, Loader2, AlertTriangle, Coins, PauseCircle, PlayCircle, RefreshCw,
-  ChevronDown, Trash2, Clock, XCircle, BarChart3,
+  ChevronDown, Trash2, Clock, XCircle, BarChart3, Info, X,
 } from 'lucide-react';
 import { useAuth } from '../state/AuthContext';
 import { useTheme } from '../state/ThemeContext';
@@ -166,6 +166,66 @@ function PlanChangePreviewCard({ preview, loading, error, classificationLabel, t
   );
 }
 
+// LinkedIn has no account-switcher parameter in its OAuth dialog (unlike
+// Facebook/Google/TikTok/Instagram, see connect() in app.py) -- it reuses
+// whichever LinkedIn account is already logged into the browser, so a plan
+// that allows several LinkedIn profiles still needs a manual step between
+// each one. Shown only when that limitation is actually relevant (plan
+// allows more than one account for this network).
+function LinkedinMultiAccountInfoModal({ onClose, t }) {
+  return (
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white dark:bg-[#121214] border border-slate-300 dark:border-white/10 p-6 rounded-2xl w-full max-w-md shadow-2xl relative"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 dark:hover:text-white"
+          aria-label={t('common.close', 'Fermer')}
+        >
+          <X size={18} />
+        </button>
+
+        <h3 className="text-base font-semibold text-slate-900 dark:text-white mb-2 pr-6">
+          {t('settings.linkedinMultiAccountTitle', 'Ajouter plusieurs comptes LinkedIn')}
+        </h3>
+
+        <p className="text-sm text-slate-600 dark:text-zinc-300 mb-3">
+          {t(
+            'settings.linkedinMultiAccountIntro',
+            "Votre offre autorise plusieurs profils LinkedIn, mais LinkedIn ne propose pas de sélecteur de compte dans sa fenêtre de connexion : si ce navigateur a déjà une session linkedin.com ouverte, LinkedIn réutilise automatiquement ce compte, sans rien demander."
+          )}
+        </p>
+
+        <ol className="text-sm text-slate-600 dark:text-zinc-300 list-decimal list-inside space-y-1.5 mb-3">
+          <li>
+            {t(
+              'settings.linkedinMultiAccountStep1',
+              'Ouvrez une fenêtre de navigation privée (le plus simple), ou déconnectez-vous de linkedin.com dans ce navigateur -- cela ne touche pas aux comptes déjà connectés à Vireel.'
+            )}
+          </li>
+          <li>{t('settings.linkedinMultiAccountStep2', 'Dans cette fenêtre, cliquez ici sur "Connecter".')}</li>
+          <li>
+            {t(
+              'settings.linkedinMultiAccountStep3',
+              'Sur la page LinkedIn qui s\'ouvre, connectez-vous avec le compte LinkedIn à ajouter.'
+            )}
+          </li>
+        </ol>
+
+        <p className="text-xs text-slate-400 dark:text-zinc-500">
+          {t('settings.linkedinMultiAccountNote', 'Cette limitation vient de LinkedIn lui-même, pas de Vireel.')}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export default function SettingsPage() {
   const { t } = useTranslation();
   const { user } = useAuth();
@@ -185,6 +245,7 @@ export default function SettingsPage() {
   const [socialError, setSocialError] = useState('');
   const [maxSocialAccount, setMaxSocialAccount] = useState(1);
   const [openAccountMenuId, setOpenAccountMenuId] = useState(null);
+  const [linkedinInfoOpen, setLinkedinInfoOpen] = useState(false);
 
   // Credit history state
   const [history, setHistory] = useState([]);
@@ -1060,6 +1121,8 @@ export default function SettingsPage() {
             const isConnected = accounts.length > 0;
             const isAtLimit = accounts.length >= maxSocialAccount;
             const isConnectBusy = Boolean(oauthLoading[network.id]);
+            const isLinkedin = network.id === 'linkedin' || network.id === 'linkedin_analytics';
+            const showLinkedinMultiAccountInfo = isLinkedin && maxSocialAccount > 1;
 
             return (
               <div
@@ -1076,7 +1139,20 @@ export default function SettingsPage() {
                       <NetworkIcon size={20} className="text-white" />
                     </div>
                     <div>
-                      <p className="font-medium text-slate-900 dark:text-white">{network.name}</p>
+                      <div className="flex items-center gap-1.5">
+                        <p className="font-medium text-slate-900 dark:text-white">{network.name}</p>
+                        {showLinkedinMultiAccountInfo && (
+                          <button
+                            type="button"
+                            onClick={() => setLinkedinInfoOpen(true)}
+                            className="text-slate-400 hover:text-primary dark:hover:text-blue-400"
+                            title={t('settings.linkedinMultiAccountInfoButton', 'Comment ajouter plusieurs comptes LinkedIn ?')}
+                            aria-label={t('settings.linkedinMultiAccountInfoButton', 'Comment ajouter plusieurs comptes LinkedIn ?')}
+                          >
+                            <Info size={13} />
+                          </button>
+                        )}
+                      </div>
                       <p className="text-xs text-slate-600 dark:text-zinc-400">{network.description}</p>
                     </div>
                   </div>
@@ -1652,6 +1728,10 @@ export default function SettingsPage() {
           </>
         )}
       </div>
+
+      {linkedinInfoOpen && (
+        <LinkedinMultiAccountInfoModal onClose={() => setLinkedinInfoOpen(false)} t={t} />
+      )}
 
     </div>
   );

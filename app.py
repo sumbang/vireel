@@ -9215,6 +9215,9 @@ _SHARE_PLATFORMS = {"tiktok", "instagram", "youtube", "facebook", "linkedin"}
 # rather than only after the fact.
 _SOCIAL_POST_PLATFORMS = {"facebook", "linkedin", "instagram", "tiktok", "youtube"}
 _SOCIAL_POST_VIDEO_ONLY_PLATFORMS = {"youtube"}
+# Only the platforms with an entry in _PLATFORM_STORY_HANDLERS -- TikTok has
+# no Stories API and LinkedIn has no Stories feature at all.
+_SOCIAL_POST_STORY_PLATFORMS = {"facebook", "instagram", "youtube"}
 
 
 async def _resolve_accounts_for_publish(
@@ -13415,6 +13418,9 @@ class CreateSocialPostRequest(BaseModel):
     comments: List[SocialPostCommentInput] = []
     scheduled_date: Optional[str] = None
     timezone: Optional[str] = "UTC"
+    # "post" (default) or "story" -- see _SOCIAL_POST_STORY_PLATFORMS and
+    # _PLATFORM_STORY_HANDLERS.
+    post_type: Optional[str] = "post"
 
 
 def _build_comment_message(comment: "SocialPostCommentInput") -> str:
@@ -13514,12 +13520,15 @@ async def _post_comments_sequence(
 
 def _build_social_post_publish_payload(
     text_value: str, background_id: Optional[str], media_url: Optional[str] = None, media_type: Optional[str] = None,
+    post_type: str = "post",
 ) -> "PublishRequest":
     # A background (Facebook's native colored-background text) can never be
     # combined with a photo or video -- Facebook silently drops the
     # background style the moment any media is attached (see
     # publish_to_facebook_text_with_background) -- so an attached media
     # takes priority and the background is simply not set in that case.
+    # A story always has media (enforced by _validate_social_post_media_for_accounts),
+    # so background_id is already guaranteed None by the time it gets here.
     if media_url:
         return PublishRequest(
             user_id="",
@@ -13529,6 +13538,7 @@ def _build_social_post_publish_payload(
             caption=text_value,
             video_url=media_url if media_type == "video" else None,
             image_url=media_url if media_type != "video" else None,
+            post_type=post_type,
         )
     return PublishRequest(
         user_id="",
@@ -13537,13 +13547,14 @@ def _build_social_post_publish_payload(
         text=text_value,
         caption=text_value,
         facebook_text_format_preset_id=anonymous_stories.get_facebook_text_format_preset_id(background_id),
+        post_type=post_type,
     )
 
 
 async def _publish_social_post_now(
     user_id: str, account: Dict[str, Any], publish_priority: int, text_value: str,
     background_id: Optional[str], comments: List["SocialPostCommentInput"],
-    media_url: Optional[str] = None, media_type: Optional[str] = None,
+    media_url: Optional[str] = None, media_type: Optional[str] = None, post_type: str = "post",
 ) -> Dict[str, Any]:
     platform_name = str(account.get("platform") or "")
     publish_job_id = await _insert_publish_job(
@@ -13559,19 +13570,24 @@ async def _publish_social_post_now(
             "background_id": background_id,
             "media_url": media_url,
             "media_type": media_type,
+            "post_type": post_type,
             "comments": [c.model_dump() for c in comments],
         },
     )
     try:
         await _update_publish_job_status(publish_job_id, "processing")
 
-        publish_payload = _build_social_post_publish_payload(text_value, background_id, media_url, media_type)
+        publish_payload = _build_social_post_publish_payload(text_value, background_id, media_url, media_type, post_type)
         publish_payload.user_id = user_id
         platform_result = await publish_post(account, publish_payload)
         external_id = str(platform_result.get("publish_id") or platform_result.get("id") or "n/a")
         post_url = _build_social_post_url(platform_name, platform_result)
 
-        comments_results = await _post_comments_sequence(platform_name, account, external_id, comments)
+        # A Story has no feed-post object to attach a follow-up comment to
+        # the same way a regular post does -- none of Facebook/Instagram's
+        # Stories APIs expose a /comments edge for one, so this is skipped
+        # outright rather than attempted and recorded as a failure.
+        comments_results = await _post_comments_sequence(platform_name, account, external_id, comments) if post_type != "story" else []
 
         await _update_publish_job_status(
             publish_job_id, "done", external_id=external_id, post_url=post_url,
@@ -13596,7 +13612,7 @@ async def _publish_social_post_now(
 async def _schedule_social_post_job(
     user_id: str, account: Dict[str, Any], publish_priority: int, scheduled_for, timezone: Optional[str],
     text_value: str, background_id: Optional[str], comments: List["SocialPostCommentInput"],
-    media_url: Optional[str] = None, media_type: Optional[str] = None,
+    media_url: Optional[str] = None, media_type: Optional[str] = None, post_type: str = "post",
 ) -> Dict[str, Any]:
     publish_job_id = await _insert_publish_job(
         user_id=user_id,
@@ -13613,6 +13629,7 @@ async def _schedule_social_post_job(
             "background_id": background_id,
             "media_url": media_url,
             "media_type": media_type,
+            "post_type": post_type,
             "comments": [c.model_dump() for c in comments],
         },
     )
@@ -13642,17 +13659,18 @@ async def _execute_scheduled_social_post_job(job_id: str, user_id: str, platform
         background_id = task_payload.get("background_id")
         media_url = task_payload.get("media_url")
         media_type = task_payload.get("media_type")
+        post_type = task_payload.get("post_type") or "post"
         comments = [
             SocialPostCommentInput(**c) for c in (task_payload.get("comments") or []) if isinstance(c, dict)
         ]
 
-        publish_payload = _build_social_post_publish_payload(text_value, background_id, media_url, media_type)
+        publish_payload = _build_social_post_publish_payload(text_value, background_id, media_url, media_type, post_type)
         publish_payload.user_id = user_id
         platform_result = await publish_post(account, publish_payload)
         external_id = str(platform_result.get("publish_id") or platform_result.get("id") or "n/a")
         post_url = _build_social_post_url(platform, platform_result)
 
-        comments_results = await _post_comments_sequence(platform, account, external_id, comments)
+        comments_results = await _post_comments_sequence(platform, account, external_id, comments) if post_type != "story" else []
 
         await _update_publish_job_status(
             job_id, "done", external_id=external_id, post_url=post_url,
@@ -13666,14 +13684,15 @@ async def _publish_or_schedule_social_post(
     user_id: str, account: Dict[str, Any], publish_priority: int, is_scheduled: bool,
     scheduled_for: Optional[datetime], tz: Optional[str], text_value: str, background_id: Optional[str],
     comments: List["SocialPostCommentInput"], media_url: Optional[str], media_type: Optional[str],
+    post_type: str = "post",
 ) -> Dict[str, Any]:
     if is_scheduled:
         return await _schedule_social_post_job(
             user_id, account, publish_priority, scheduled_for, tz,
-            text_value, background_id, comments, media_url, media_type,
+            text_value, background_id, comments, media_url, media_type, post_type,
         )
     return await _publish_social_post_now(
-        user_id, account, publish_priority, text_value, background_id, comments, media_url, media_type,
+        user_id, account, publish_priority, text_value, background_id, comments, media_url, media_type, post_type,
     )
 
 
@@ -13681,26 +13700,35 @@ _SOCIAL_POST_PLATFORM_DISPLAY_NAMES = {"instagram": "Instagram", "tiktok": "TikT
 
 
 def _validate_social_post_media_for_accounts(
-    accounts: List[Dict[str, Any]], media_url: Optional[str], media_type: Optional[str],
+    accounts: List[Dict[str, Any]], media_url: Optional[str], media_type: Optional[str], post_type: str = "post",
 ) -> None:
-    """Up-front equivalent of what _PLATFORM_HANDLERS' Instagram/TikTok/
-    YouTube handlers already enforce on their own (see
-    _publish_instagram_platform/_publish_tiktok_platform/
-    _resolve_youtube_video_path) -- raises a clear 400 naming the platform
-    before a publish_jobs row is even created, instead of only after a
-    per-account publish attempt has already failed."""
+    """Up-front equivalent of what _PLATFORM_HANDLERS/_PLATFORM_STORY_HANDLERS
+    already enforce on their own (see _publish_instagram_platform/
+    _publish_tiktok_platform/_resolve_youtube_video_path and their story
+    counterparts) -- raises a clear 400 naming the platform before a
+    publish_jobs row is even created, instead of only after a per-account
+    publish attempt has already failed.
+
+    A "post" only requires media for Instagram/TikTok/YouTube (Facebook/
+    LinkedIn also accept text-only). A "story" requires media for every
+    platform that has one at all -- none of Facebook/Instagram/YouTube's
+    Stories APIs accept a text-only story."""
     for account in accounts:
         platform = str(account.get("platform") or "")
-        display_name = _SOCIAL_POST_PLATFORM_DISPLAY_NAMES.get(platform)
-        if display_name is None:
-            continue  # Facebook/LinkedIn accept text-only posts, nothing to check.
+        display_name = _SOCIAL_POST_PLATFORM_DISPLAY_NAMES.get(platform, platform.capitalize())
+        requires_media = post_type == "story" or platform in _SOCIAL_POST_PLATFORM_DISPLAY_NAMES
+        if not requires_media:
+            continue  # Facebook/LinkedIn accept a text-only *post*, nothing to check.
         if not media_url:
+            if post_type == "story":
+                raise HTTPException(status_code=400, detail=f"{display_name} n'accepte pas les stories sans photo ni video.")
             raise HTTPException(
                 status_code=400,
                 detail=f"{display_name} n'accepte pas les publications texte seul : ajoutez une photo ou une video.",
             )
         if platform in _SOCIAL_POST_VIDEO_ONLY_PLATFORMS and media_type != "video":
-            raise HTTPException(status_code=400, detail=f"{display_name} n'accepte que les publications video.")
+            noun = "stories" if post_type == "story" else "publications"
+            raise HTTPException(status_code=400, detail=f"{display_name} n'accepte que les {noun} video.")
 
 
 @app.post("/api/social/posts", responses={400: {"description": "Bad Request"}, 401: {"description": "Unauthorized"}, 402: {"description": "Payment Required"}, 403: {"description": "Forbidden"}, 404: {"description": "Not Found"}, 502: {"description": "Bad Gateway"}, 503: {"description": "Service Unavailable"}})
@@ -13718,18 +13746,25 @@ async def create_social_post(payload: CreateSocialPostRequest, user_id: Annotate
             ),
         )
 
+    post_type = (payload.post_type or "post").strip().lower()
+    if post_type not in ("post", "story"):
+        raise HTTPException(status_code=400, detail="post_type must be 'post' or 'story'")
+
     text_value = (payload.text or "").strip()
     media_url = (payload.media_url or "").strip() or None
     media_type = payload.media_type if media_url else None
     # Meta's own APIs only require text on a plain text-only post (Graph API
     # rejects an empty /feed message with no attachment) -- a photo or video
     # carries the caption/message as optional, so text is only mandatory
-    # here when there is no media to publish instead.
+    # here when there is no media to publish instead. A story always needs
+    # media regardless (see _validate_social_post_media_for_accounts below),
+    # so this check alone is intentionally not post_type-aware.
     if not text_value and not media_url:
         raise HTTPException(status_code=400, detail="text is required when no media is attached")
 
-    accounts = await _resolve_accounts_for_publish(user_id, payload.account_ids, _SOCIAL_POST_PLATFORMS)
-    _validate_social_post_media_for_accounts(accounts, media_url, media_type)
+    allowed_platforms = _SOCIAL_POST_STORY_PLATFORMS if post_type == "story" else _SOCIAL_POST_PLATFORMS
+    accounts = await _resolve_accounts_for_publish(user_id, payload.account_ids, allowed_platforms)
+    _validate_social_post_media_for_accounts(accounts, media_url, media_type, post_type)
     await _assert_user_can_publish(user_id, len(accounts))
     publish_priority = await _resolve_user_job_priority(user_id)
     scheduled_for = _resolve_scheduled_datetime(payload.scheduled_date, payload.timezone)
@@ -13749,7 +13784,7 @@ async def create_social_post(payload: CreateSocialPostRequest, user_id: Annotate
         result_key = str(account.get("id") or account.get("platform"))
         results[result_key] = await _publish_or_schedule_social_post(
             user_id, account, publish_priority, is_scheduled, scheduled_for, payload.timezone,
-            text_value, background_id, comments, media_url, media_type,
+            text_value, background_id, comments, media_url, media_type, post_type,
         )
 
     overall_success = all(result.get("success") for result in results.values())
@@ -13759,6 +13794,7 @@ async def create_social_post(payload: CreateSocialPostRequest, user_id: Annotate
         "results": results,
         "background_id": background_id,
         "scheduled": is_scheduled,
+        "post_type": post_type,
     }
 
 
@@ -17912,6 +17948,11 @@ class PublishRequest(BaseModel):
     image_url: Optional[str] = None
     facebook_text_format_preset_id: Optional[str] = None
     privacy_level: Optional[str] = "PUBLIC_TO_EVERYONE"
+    # "post" (default, the normal feed/profile publication) or "story" --
+    # see _PLATFORM_STORY_HANDLERS. Only Facebook/Instagram/YouTube have a
+    # story handler; TikTok has no Stories API and LinkedIn has no Stories
+    # feature at all.
+    post_type: Optional[str] = "post"
 
 
 # --------------------------------------------------------------------------
@@ -18280,6 +18321,114 @@ async def publish_to_facebook_photo(access_token: str, target_id: str, image_url
     return {"id": response.json().get("id")}
 
 
+async def publish_to_facebook_photo_story(access_token: str, page_id: str, image_url: str) -> Dict[str, Any]:
+    """Facebook Page Stories, photo variant: upload the photo unpublished
+    (published=false, so it never appears in the Page's own feed/gallery),
+    then publish that photo to Stories via /photo_stories -- a much
+    simpler two-call flow than the video one below, with no resumable
+    upload involved."""
+    if not page_id:
+        raise HTTPException(status_code=400, detail=_FACEBOOK_TARGET_ID_MISSING)
+    if not access_token:
+        raise HTTPException(status_code=401, detail=_FACEBOOK_TOKEN_EXPIRED_OR_MISSING)
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        photo_response = await client.post(
+            f"https://graph.facebook.com/v19.0/{page_id}/photos",
+            data={"url": image_url, "published": "false", "access_token": access_token},
+        )
+    await _raise_for_status_or_502(photo_response, "Facebook")
+    photo_id = photo_response.json().get("id")
+    if not photo_id:
+        raise HTTPException(status_code=502, detail="Facebook did not return a photo id for the story upload")
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        story_response = await client.post(
+            f"https://graph.facebook.com/v19.0/{page_id}/photo_stories",
+            data={"photo_id": photo_id, "access_token": access_token},
+        )
+    await _raise_for_status_or_502(story_response, "Facebook")
+    return story_response.json()
+
+
+async def _start_facebook_video_story(access_token: str, page_id: str) -> Tuple[str, str]:
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(
+            f"https://graph.facebook.com/v19.0/{page_id}/video_stories",
+            data={"upload_phase": "start", "access_token": access_token},
+        )
+    await _raise_for_status_or_502(response, "Facebook")
+    data = response.json()
+    video_id = data.get("video_id")
+    upload_url = data.get("upload_url")
+    if not video_id or not upload_url:
+        raise HTTPException(status_code=502, detail="Facebook did not return a video_id/upload_url for the story upload")
+    return video_id, upload_url
+
+
+async def _transfer_facebook_video_story(access_token: str, upload_url: str, video_url: str) -> None:
+    # Points Meta's own upload host at the video's already-public URL
+    # (same file_url-by-reference approach every other Facebook/Instagram
+    # media publish in this file already uses) instead of streaming the
+    # bytes through this server ourselves.
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        response = await client.post(
+            upload_url,
+            headers={"Authorization": f"OAuth {access_token}", "file_url": video_url},
+        )
+    await _raise_for_status_or_502(response, "Facebook")
+
+
+async def _poll_facebook_video_story_status(access_token: str, video_id: str, max_attempts: int = 20) -> str:
+    delay = 2.0
+    for _ in range(max_attempts):
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                f"https://graph.facebook.com/v19.0/{video_id}",
+                params={"fields": "status", "access_token": access_token},
+            )
+        await _raise_for_status_or_502(response, "Facebook")
+        status = ((response.json().get("status") or {}).get("uploading_phase") or {}).get("status")
+        if status == "complete":
+            return status
+        if status == "error":
+            logger.error("Facebook video story upload error for %s", video_id)
+            return status
+        await asyncio.sleep(delay)
+        delay = min(delay * 1.5, 30.0)
+    return "timeout"
+
+
+async def publish_to_facebook_video_story(access_token: str, page_id: str, video_url: str) -> Dict[str, Any]:
+    """Facebook Page Stories, video variant: a 3-step resumable-upload flow
+    (start -> transfer -> finish) -- unlike every other Facebook/Instagram
+    publish path in this file, which hand Meta a public file_url in a
+    single call. Confirmed against Meta's own Stories API reference; the
+    header-based file_url transfer (Authorization: OAuth <token> +
+    file_url header, rather than a body param) is the documented
+    approach, though Meta's own docs don't fully spell out every failure
+    mode here -- a hard failure surfaces as-is rather than silently
+    falling back to a regular video post."""
+    if not page_id:
+        raise HTTPException(status_code=400, detail=_FACEBOOK_TARGET_ID_MISSING)
+    if not access_token:
+        raise HTTPException(status_code=401, detail=_FACEBOOK_TOKEN_EXPIRED_OR_MISSING)
+
+    video_id, upload_url = await _start_facebook_video_story(access_token, page_id)
+    await _transfer_facebook_video_story(access_token, upload_url, video_url)
+    status = await _poll_facebook_video_story_status(access_token, video_id)
+    if status != "complete":
+        raise HTTPException(status_code=502, detail=f"Facebook video story upload not ready: {status}")
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        finish_response = await client.post(
+            f"https://graph.facebook.com/v19.0/{page_id}/video_stories",
+            data={"upload_phase": "finish", "video_id": video_id, "access_token": access_token},
+        )
+    await _raise_for_status_or_502(finish_response, "Facebook")
+    return finish_response.json()
+
+
 async def publish_to_facebook_text_with_background(
     access_token: str, page_id: str, message: str, meta_preset_id: str,
 ) -> Dict[str, Any]:
@@ -18341,6 +18490,19 @@ async def publish_to_instagram(token: str, ig_user_id: str, video_url: Optional[
 
 async def publish_to_instagram_image(token: str, ig_user_id: str, image_url: str, caption: str) -> Dict[str, Any]:
     return await _publish_instagram_container(token, ig_user_id, caption, "IMAGE", "image_url", image_url)
+
+
+async def publish_to_instagram_video_story(token: str, ig_user_id: str, video_url: str, caption: str) -> Dict[str, Any]:
+    # Unlike regular posts (REELS vs IMAGE), Instagram uses the SAME
+    # media_type ("STORIES") for both a photo and a video story -- only
+    # which of image_url/video_url is set tells the container which kind
+    # it is. Reuses the exact same container/poll/publish flow as every
+    # other Instagram media type.
+    return await _publish_instagram_container(token, ig_user_id, caption, "STORIES", "video_url", video_url)
+
+
+async def publish_to_instagram_photo_story(token: str, ig_user_id: str, image_url: str, caption: str) -> Dict[str, Any]:
+    return await _publish_instagram_container(token, ig_user_id, caption, "STORIES", "image_url", image_url)
 
 
 async def _publish_instagram_container(
@@ -18772,6 +18934,67 @@ _PLATFORM_HANDLERS = {
     "instagram": _publish_instagram_platform,
     "youtube": _publish_youtube_platform,
     "tiktok": _publish_tiktok_platform,
+}
+
+
+async def _publish_facebook_story(account: Dict[str, Any], token: str, content, text_value: str) -> Dict[str, Any]:
+    target_id = _require_platform_user_id(account, "Facebook")
+    image_url = getattr(content, "image_url", None)
+
+    if content.video_url:
+        return await publish_to_facebook_video_story(token, target_id, content.video_url)
+    if image_url:
+        return await publish_to_facebook_photo_story(token, target_id, image_url)
+    raise HTTPException(
+        status_code=400,
+        detail="Facebook Stories require either video_url or image_url (text-only stories are not supported by the platform)",
+    )
+
+
+async def _publish_instagram_story(account: Dict[str, Any], token: str, content, text_value: str) -> Dict[str, Any]:
+    ig_user_id = _require_platform_user_id(account, "Instagram")
+    image_url = getattr(content, "image_url", None)
+
+    if content.video_url:
+        return await publish_to_instagram_video_story(token, ig_user_id, content.video_url, text_value)
+    if image_url:
+        return await publish_to_instagram_photo_story(token, ig_user_id, image_url, text_value)
+    raise HTTPException(
+        status_code=400,
+        detail="Instagram Stories require either video_url or image_url (text-only stories are not supported by the platform)",
+    )
+
+
+async def _publish_youtube_story(account: Dict[str, Any], token: str, content, text_value: str) -> Dict[str, Any]:
+    """YouTube has no distinct "Stories" feature (Google discontinued
+    YouTube Stories in 2023) -- the closest equivalent creators actually
+    use is a Short, which is just a normal upload that YouTube classifies
+    automatically from the file itself (vertical, under 60s), not from
+    any API flag. Reuses the exact same upload as a regular YouTube post,
+    only adding the #Shorts hashtag to the description -- a common
+    creator convention that helps the Shorts shelf/search surface it, on
+    top of (not instead of) YouTube's own automatic classification."""
+    video_path = await _resolve_youtube_video_path(content)
+    downloaded = not (content.video_file or "").strip()
+    description = content.description or text_value or ""
+    if "#shorts" not in description.lower():
+        description = f"{description}\n#Shorts".strip()
+    try:
+        return await upload_youtube_video(token, video_path, content.title or "Vireel Short", description)
+    finally:
+        if downloaded:
+            _cleanup_temp_file(video_path)
+
+
+# TikTok had an experimental "Stories" feature (2022-2023) that was rolled
+# back and never got Content Posting API support; LinkedIn has no Stories
+# feature at all -- so, unlike _PLATFORM_HANDLERS, there's no entry for
+# either here. Re-check TikTok's developer changelog before assuming this
+# is still true.
+_PLATFORM_STORY_HANDLERS = {
+    "facebook": _publish_facebook_story,
+    "instagram": _publish_instagram_story,
+    "youtube": _publish_youtube_story,
 }
 
 
@@ -19897,7 +20120,9 @@ async def publish_post(account: Dict[str, Any], content) -> Dict[str, Any]:
     platform = str(account.get("platform") or "").lower()
     text_value = content.text or content.caption or content.description or "Posted from Vireel"
 
-    handler = _PLATFORM_HANDLERS.get(platform)
+    post_type = getattr(content, "post_type", None) or "post"
+    handlers = _PLATFORM_STORY_HANDLERS if post_type == "story" else _PLATFORM_HANDLERS
+    handler = handlers.get(platform)
     if handler is None:
         raise HTTPException(status_code=404, detail=_UNSUPPORTED_PLATFORM)
     return await handler(account, token, content, text_value)

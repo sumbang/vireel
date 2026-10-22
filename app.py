@@ -13699,6 +13699,27 @@ async def _publish_or_schedule_social_post(
 _SOCIAL_POST_PLATFORM_DISPLAY_NAMES = {"instagram": "Instagram", "tiktok": "TikTok", "youtube": "YouTube"}
 
 
+def _validate_one_social_post_account_media(
+    platform: str, media_url: Optional[str], media_type: Optional[str], post_type: str,
+) -> None:
+    display_name = _SOCIAL_POST_PLATFORM_DISPLAY_NAMES.get(platform, platform.capitalize())
+    requires_media = post_type == "story" or platform in _SOCIAL_POST_PLATFORM_DISPLAY_NAMES
+    if not requires_media:
+        return  # Facebook/LinkedIn accept a text-only *post*, nothing to check.
+
+    if not media_url:
+        if post_type == "story":
+            raise HTTPException(status_code=400, detail=f"{display_name} n'accepte pas les stories sans photo ni video.")
+        raise HTTPException(
+            status_code=400,
+            detail=f"{display_name} n'accepte pas les publications texte seul : ajoutez une photo ou une video.",
+        )
+
+    if platform in _SOCIAL_POST_VIDEO_ONLY_PLATFORMS and media_type != "video":
+        noun = "stories" if post_type == "story" else "publications"
+        raise HTTPException(status_code=400, detail=f"{display_name} n'accepte que les {noun} video.")
+
+
 def _validate_social_post_media_for_accounts(
     accounts: List[Dict[str, Any]], media_url: Optional[str], media_type: Optional[str], post_type: str = "post",
 ) -> None:
@@ -13715,28 +13736,10 @@ def _validate_social_post_media_for_accounts(
     Stories APIs accept a text-only story."""
     for account in accounts:
         platform = str(account.get("platform") or "")
-        display_name = _SOCIAL_POST_PLATFORM_DISPLAY_NAMES.get(platform, platform.capitalize())
-        requires_media = post_type == "story" or platform in _SOCIAL_POST_PLATFORM_DISPLAY_NAMES
-        if not requires_media:
-            continue  # Facebook/LinkedIn accept a text-only *post*, nothing to check.
-        if not media_url:
-            if post_type == "story":
-                raise HTTPException(status_code=400, detail=f"{display_name} n'accepte pas les stories sans photo ni video.")
-            raise HTTPException(
-                status_code=400,
-                detail=f"{display_name} n'accepte pas les publications texte seul : ajoutez une photo ou une video.",
-            )
-        if platform in _SOCIAL_POST_VIDEO_ONLY_PLATFORMS and media_type != "video":
-            noun = "stories" if post_type == "story" else "publications"
-            raise HTTPException(status_code=400, detail=f"{display_name} n'accepte que les {noun} video.")
+        _validate_one_social_post_account_media(platform, media_url, media_type, post_type)
 
 
-@app.post("/api/social/posts", responses={400: {"description": "Bad Request"}, 401: {"description": "Unauthorized"}, 402: {"description": "Payment Required"}, 403: {"description": "Forbidden"}, 404: {"description": "Not Found"}, 502: {"description": "Bad Gateway"}, 503: {"description": "Service Unavailable"}})
-async def create_social_post(payload: CreateSocialPostRequest, user_id: Annotated[str, Depends(get_user_id_header)]):
-    await _assert_user_has_active_subscription_for_publish(user_id)
-
-    comments = payload.comments or []
-    max_comments = await _get_user_max_comments_per_post(user_id)
+def _assert_social_post_comment_limit(comments: List["SocialPostCommentInput"], max_comments: int) -> None:
     if len(comments) > max_comments:
         raise HTTPException(
             status_code=403,
@@ -13746,10 +13749,15 @@ async def create_social_post(payload: CreateSocialPostRequest, user_id: Annotate
             ),
         )
 
-    post_type = (payload.post_type or "post").strip().lower()
+
+def _resolve_social_post_type(raw_post_type: Optional[str]) -> str:
+    post_type = (raw_post_type or "post").strip().lower()
     if post_type not in ("post", "story"):
         raise HTTPException(status_code=400, detail="post_type must be 'post' or 'story'")
+    return post_type
 
+
+def _resolve_social_post_media(payload: "CreateSocialPostRequest") -> Tuple[str, Optional[str], Optional[str]]:
     text_value = (payload.text or "").strip()
     media_url = (payload.media_url or "").strip() or None
     media_type = payload.media_type if media_url else None
@@ -13761,31 +13769,65 @@ async def create_social_post(payload: CreateSocialPostRequest, user_id: Annotate
     # so this check alone is intentionally not post_type-aware.
     if not text_value and not media_url:
         raise HTTPException(status_code=400, detail="text is required when no media is attached")
+    return text_value, media_url, media_type
+
+
+def _resolve_social_post_schedule(payload: "CreateSocialPostRequest"):
+    """Pulled out of create_social_post to keep its cognitive complexity
+    down -- same shape as _resolve_anonymous_story_schedule."""
+    scheduled_for = _resolve_scheduled_datetime(payload.scheduled_date, payload.timezone)
+    if payload.scheduled_date and not scheduled_for:
+        raise HTTPException(status_code=400, detail=_INVALID_SCHEDULED_DATE)
+    is_scheduled = bool(scheduled_for and scheduled_for > _utcnow())
+    return scheduled_for, is_scheduled
+
+
+async def _dispatch_social_post_to_accounts(
+    user_id: str, accounts: List[Dict[str, Any]], publish_priority: int, is_scheduled: bool,
+    scheduled_for, timezone: Optional[str], text_value: str, background_id: Optional[str],
+    comments: List["SocialPostCommentInput"], media_url: Optional[str], media_type: Optional[str], post_type: str,
+) -> Dict[str, Any]:
+    """Publish (or schedule) the post across every selected account, keyed
+    by account id (not platform) so publishing to several accounts of the
+    same platform (e.g. two Facebook Pages) reports each one separately
+    instead of the second silently overwriting the first. Pulled out of
+    create_social_post to keep its cognitive complexity down."""
+    results: Dict[str, Any] = {}
+    for account in accounts:
+        result_key = str(account.get("id") or account.get("platform"))
+        results[result_key] = await _publish_or_schedule_social_post(
+            user_id, account, publish_priority, is_scheduled, scheduled_for, timezone,
+            text_value, background_id, comments, media_url, media_type, post_type,
+        )
+    return results
+
+
+@app.post("/api/social/posts", responses={400: {"description": "Bad Request"}, 401: {"description": "Unauthorized"}, 402: {"description": "Payment Required"}, 403: {"description": "Forbidden"}, 404: {"description": "Not Found"}, 502: {"description": "Bad Gateway"}, 503: {"description": "Service Unavailable"}})
+async def create_social_post(payload: CreateSocialPostRequest, user_id: Annotated[str, Depends(get_user_id_header)]):
+    await _assert_user_has_active_subscription_for_publish(user_id)
+
+    comments = payload.comments or []
+    max_comments = await _get_user_max_comments_per_post(user_id)
+    _assert_social_post_comment_limit(comments, max_comments)
+
+    post_type = _resolve_social_post_type(payload.post_type)
+    text_value, media_url, media_type = _resolve_social_post_media(payload)
 
     allowed_platforms = _SOCIAL_POST_STORY_PLATFORMS if post_type == "story" else _SOCIAL_POST_PLATFORMS
     accounts = await _resolve_accounts_for_publish(user_id, payload.account_ids, allowed_platforms)
     _validate_social_post_media_for_accounts(accounts, media_url, media_type, post_type)
     await _assert_user_can_publish(user_id, len(accounts))
     publish_priority = await _resolve_user_job_priority(user_id)
-    scheduled_for = _resolve_scheduled_datetime(payload.scheduled_date, payload.timezone)
-    if payload.scheduled_date and not scheduled_for:
-        raise HTTPException(status_code=400, detail=_INVALID_SCHEDULED_DATE)
-    is_scheduled = bool(scheduled_for and scheduled_for > _utcnow())
+    scheduled_for, is_scheduled = _resolve_social_post_schedule(payload)
     # A background can't be combined with a photo/video (Facebook drops the
     # background style the moment media is attached), so only default to
     # the first preset when there's no attached media at all.
     background_id = (payload.background_id or anonymous_stories.BACKGROUND_PRESETS[0]["id"]) if not media_url else None
 
-    # Keyed by account id (not platform) so publishing to several accounts
-    # of the same platform (e.g. two Facebook Pages) reports each one
-    # separately instead of the second silently overwriting the first.
-    results: Dict[str, Any] = {}
-    for account in accounts:
-        result_key = str(account.get("id") or account.get("platform"))
-        results[result_key] = await _publish_or_schedule_social_post(
-            user_id, account, publish_priority, is_scheduled, scheduled_for, payload.timezone,
-            text_value, background_id, comments, media_url, media_type, post_type,
-        )
+    results = await _dispatch_social_post_to_accounts(
+        user_id, accounts, publish_priority, is_scheduled, scheduled_for, payload.timezone,
+        text_value, background_id, comments, media_url, media_type, post_type,
+    )
 
     overall_success = all(result.get("success") for result in results.values())
 

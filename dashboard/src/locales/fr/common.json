@@ -641,7 +641,7 @@
     "postComposerTitle": "Faire une publication",
     "postComposerTypePost": "Publication",
     "postComposerTypeStory": "Story",
-    "postComposerStoryHint": "Facebook, Instagram et YouTube (en tant que Short) uniquement -- TikTok n'a pas d'API pour ses stories, LinkedIn n'a pas de stories.",
+    "postComposerStoryHint": "Facebook, Instagram et YouTube (en tant que Short) uniquement",
     "postComposerTextLabel": "Texte de la publication",
     "postComposerTextPlaceholder": "Écris ta publication...",
     "postComposerTextRequired": "Écris le texte de ta publication.",

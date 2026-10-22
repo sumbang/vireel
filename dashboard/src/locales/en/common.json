@@ -640,7 +640,7 @@
     "postComposerTitle": "Make a post",
     "postComposerTypePost": "Post",
     "postComposerTypeStory": "Story",
-    "postComposerStoryHint": "Facebook, Instagram and YouTube (as a Short) only -- TikTok has no API for its stories, LinkedIn has no stories feature.",
+    "postComposerStoryHint": "Facebook, Instagram and YouTube (as a Short) only",
     "postComposerTextLabel": "Post text",
     "postComposerTextPlaceholder": "Write your post...",
     "postComposerTextRequired": "Write the text of your post.",

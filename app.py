@@ -2101,6 +2101,18 @@ async def _finalize_failed_reel_job(
 
     await _mark_reel_job_project_failed(job_data, user_id)
 
+    # Only the terminal "failed" status is worth notifying about -- fail_job
+    # returns "retry_wait" when attempts remain, and the job isn't actually
+    # over yet in that case.
+    if user_id and fail_result.get("status") == "failed":
+        await _create_notification(
+            user_id,
+            "reel_generation_failed",
+            "Echec de la generation de reels",
+            "La generation de vos reels a echoue. Reessayez ou contactez le support si le probleme persiste.",
+            data={"job_id": job_id, "project_id": (job_data or {}).get("project_id")},
+        )
+
     return fail_result
 
 
@@ -3154,6 +3166,15 @@ async def _finalize_completed_reel_billing(
         consumed_quota=billing['processing_ratio'],
         cost_breakdown=billing['cost_breakdown'],
     )
+    if user_id:
+        reel_count = len(saved_rows)
+        await _create_notification(
+            user_id,
+            "reel_generation_completed",
+            "Vos reels sont prets" if reel_count != 1 else "Votre reel est pret",
+            f"{reel_count} reel(s) ont ete generes avec succes." if reel_count != 1 else "Votre reel a ete genere avec succes.",
+            data={"job_id": job_id, "project_id": job_data.get("project_id"), "reel_count": reel_count},
+        )
 
 
 def _derive_reel_completion_summary_text(enriched_clips: List[Dict[str, Any]], saved_rows: List[Dict[str, Any]]) -> str:
@@ -3731,6 +3752,14 @@ async def _handle_caption_job_failure(job_id: str, job_data: Dict[str, Any], use
 
     if result.get("retry"):
         _spawn_background_task(_schedule_reel_retry(job_id, CAPTION_JOB_RETRY_DELAY_SECONDS))
+    elif user_id:
+        await _create_notification(
+            user_id,
+            "subtitle_generation_failed",
+            "Echec de la generation de sous-titres",
+            "La generation de vos sous-titres a echoue. Reessayez ou contactez le support si le probleme persiste.",
+            data={"job_id": job_id, "project_id": (job_data or {}).get("project_id")},
+        )
 
 
 async def _process_and_complete_caption_job(
@@ -3805,6 +3834,14 @@ async def _process_and_complete_caption_job(
     )
 
     await _update_project_on_caption_completion(job_data, user_id, normalized_item, local_duration)
+    if user_id:
+        await _create_notification(
+            user_id,
+            "subtitle_generation_completed",
+            "Vos sous-titres sont prets",
+            f'Les sous-titres de "{title}" ont ete generes avec succes.',
+            data={"job_id": job_id, "project_id": (job_data or {}).get("project_id"), "caption_id": normalized_item.get("id")},
+        )
 
     await _persist_transcription_cache(
         user_id=user_id,
@@ -10309,6 +10346,9 @@ def _sync_customer_default_payment_method(stripe_subscription_id: Optional[str],
         logger.warning("Failed to sync default payment method for customer %s", stripe_customer_id)
 
 
+FILM_SUMMARY_FAILED_NOTIFICATION_TITLE = "Echec du resume de film"
+
+
 async def _create_notification(
     user_id: str, type_: str, title: str, body: str = "", data: Optional[Dict[str, Any]] = None,
 ) -> None:
@@ -12850,11 +12890,27 @@ async def _run_anonymous_story_job(
         await reel_job_manager.fail_job(job_id, str(exc), error_code=exc.code)
         await _mark_anonymous_story_job_failed(user_id, story_id, project_id, exc.code, str(exc))
         await reel_job_manager.refund_reservation(job_id, user_id, story_required_credits, operation_type=anonymous_stories.CREDIT_OPERATION_TYPE)
+        if user_id:
+            await _create_notification(
+                user_id,
+                "anonymous_story_failed",
+                "Echec de l'histoire anonyme",
+                str(exc) or "La generation de votre histoire anonyme a echoue.",
+                data={"job_id": job_id, "project_id": project_id, "story_id": story_id},
+            )
     except Exception as exc:  # noqa: BLE001 -- any unexpected failure must still fail the job and refund the user
         logger.exception(f"Anonymous story job {job_id} failed")
         await reel_job_manager.fail_job(job_id, "Technical failure while generating the story", error_code="GENERATION_INVALID")
         await _mark_anonymous_story_job_failed(user_id, story_id, project_id, "GENERATION_INVALID", str(exc))
         await reel_job_manager.refund_reservation(job_id, user_id, story_required_credits, operation_type=anonymous_stories.CREDIT_OPERATION_TYPE)
+        if user_id:
+            await _create_notification(
+                user_id,
+                "anonymous_story_failed",
+                "Echec de l'histoire anonyme",
+                "La generation de votre histoire anonyme a echoue. Reessayez ou contactez le support si le probleme persiste.",
+                data={"job_id": job_id, "project_id": project_id, "story_id": story_id},
+            )
     finally:
         if os.path.exists(output_dir):
             shutil.rmtree(output_dir, ignore_errors=True)
@@ -13020,6 +13076,14 @@ async def _finalize_anonymous_story_job(
         cost_breakdown=cost_breakdown,
         consumed_quota=1.0,
     )
+    if user_id:
+        await _create_notification(
+            user_id,
+            "anonymous_story_completed",
+            "Votre histoire anonyme est prete",
+            f'"{generated_title}" a ete generee avec succes.' if generated_title else "Votre histoire anonyme a ete generee avec succes.",
+            data={"job_id": job_id, "project_id": project_id, "story_id": story_id},
+        )
 
 
 @app.get("/api/anonymous-stories", responses={401: {"description": "Unauthorized"}, 403: {"description": "Forbidden"}, 503: {"description": "Service Unavailable"}})
@@ -13676,8 +13740,22 @@ async def _execute_scheduled_social_post_job(job_id: str, user_id: str, platform
             job_id, "done", external_id=external_id, post_url=post_url,
             extra_payload={"comments_results": comments_results},
         )
+        await _create_notification(
+            user_id,
+            "scheduled_publish_completed",
+            "Votre publication programmee est en ligne",
+            f"Votre publication {_SOCIAL_POST_PLATFORM_DISPLAY_NAMES.get(platform, platform.capitalize())} programmee a ete publiee avec succes.",
+            data={"job_id": job_id, "platform": platform, "post_url": post_url},
+        )
     except Exception as exc:
         await _update_publish_job_status(job_id, "failed", error_message=str(exc))
+        await _create_notification(
+            user_id,
+            "scheduled_publish_failed",
+            "Echec de la publication programmee",
+            f"Votre publication {_SOCIAL_POST_PLATFORM_DISPLAY_NAMES.get(platform, platform.capitalize())} programmee a echoue. Reessayez ou contactez le support si le probleme persiste.",
+            data={"job_id": job_id, "platform": platform},
+        )
 
 
 async def _publish_or_schedule_social_post(
@@ -15132,6 +15210,10 @@ async def _run_film_summary_render_job(
             film_summary.FilmSummaryStage.FAILED, exc.code, str(exc),
         )
         await reel_job_manager.refund_reservation(job_id, user_id, render_required_credits, operation_type=film_summary.CREDIT_OPERATION_TYPE)
+        await _create_notification(
+            user_id, "film_summary_failed", FILM_SUMMARY_FAILED_NOTIFICATION_TITLE, str(exc) or "Le rendu de votre resume de film a echoue.",
+            data={"job_id": job_id, "project_id": project_id, "film_summary_id": film_summary_id},
+        )
     except Exception as exc:  # noqa: BLE001
         logger.exception(f"Film summary render job {job_id} failed")
         await reel_job_manager.fail_job(job_id, "Technical failure while rendering the film summary", error_code=film_summary.FilmSummaryErrorCode.RENDER_FAILED)
@@ -15140,6 +15222,11 @@ async def _run_film_summary_render_job(
             film_summary.FilmSummaryStage.FAILED, film_summary.FilmSummaryErrorCode.RENDER_FAILED, str(exc),
         )
         await reel_job_manager.refund_reservation(job_id, user_id, render_required_credits, operation_type=film_summary.CREDIT_OPERATION_TYPE)
+        await _create_notification(
+            user_id, "film_summary_failed", FILM_SUMMARY_FAILED_NOTIFICATION_TITLE,
+            "Le rendu de votre resume de film a echoue. Reessayez ou contactez le support si le probleme persiste.",
+            data={"job_id": job_id, "project_id": project_id, "film_summary_id": film_summary_id},
+        )
     finally:
         if os.path.exists(output_dir):
             shutil.rmtree(output_dir, ignore_errors=True)
@@ -15499,6 +15586,13 @@ async def _finalize_film_summary_render(
         cost_breakdown=cost_breakdown,
         consumed_quota=1.0,
     )
+    await _create_notification(
+        user_id,
+        "film_summary_completed",
+        "Votre resume de film est pret",
+        "Le rendu final de votre resume de film est termine.",
+        data={"job_id": job_id, "project_id": project_id, "film_summary_id": film_summary_id},
+    )
 
 
 @app.post("/api/film-summaries/{film_summary_id}/cancel", responses={401: {"description": "Unauthorized"}, 403: {"description": "Forbidden"}, 404: {"description": "Not Found"}, 409: {"description": "Conflict"}})
@@ -15629,6 +15723,13 @@ async def _handle_film_summary_validation_failure(
     await reel_job_manager.fail_job(job_id, str(exc), error_code=exc.code)
     await _mark_film_summary_job_terminal(user_id, film_summary_id, project_id, status, stage, exc.code, str(exc))
     await reel_job_manager.refund_reservation(job_id, user_id, required_credits, operation_type=film_summary.CREDIT_OPERATION_TYPE)
+    await _create_notification(
+        user_id,
+        "film_summary_failed",
+        FILM_SUMMARY_FAILED_NOTIFICATION_TITLE,
+        str(exc) or "La generation de votre resume de film a echoue.",
+        data={"job_id": job_id, "project_id": project_id, "film_summary_id": film_summary_id},
+    )
 
 
 async def _handle_film_summary_unexpected_failure(
@@ -15642,6 +15743,13 @@ async def _handle_film_summary_unexpected_failure(
         film_summary.FilmSummaryStage.FAILED, "GENERATION_INVALID", str(exc),
     )
     await reel_job_manager.refund_reservation(job_id, user_id, required_credits, operation_type=film_summary.CREDIT_OPERATION_TYPE)
+    await _create_notification(
+        user_id,
+        "film_summary_failed",
+        FILM_SUMMARY_FAILED_NOTIFICATION_TITLE,
+        "La generation de votre resume de film a echoue. Reessayez ou contactez le support si le probleme persiste.",
+        data={"job_id": job_id, "project_id": project_id, "film_summary_id": film_summary_id},
+    )
 
 
 async def _resume_film_summary_analysis_from_cache(
@@ -16970,8 +17078,22 @@ async def _execute_scheduled_publish_job(job_row: Dict[str, Any]) -> None:
         external_id = str(platform_result.get("publish_id") or platform_result.get("id") or platform_result.get("video_id") or "n/a")
         post_url = _build_social_post_url(platform, platform_result)
         await _update_publish_job_status(job_id, "done", external_id=external_id, post_url=post_url, error_message=None)
+        await _create_notification(
+            user_id,
+            "scheduled_publish_completed",
+            "Votre publication programmee est en ligne",
+            f"Votre publication {_SOCIAL_POST_PLATFORM_DISPLAY_NAMES.get(platform, platform.capitalize())} programmee a ete publiee avec succes.",
+            data={"job_id": job_id, "platform": platform, "post_url": post_url},
+        )
     except Exception as exc:
         await _update_publish_job_status(job_id, "failed", error_message=str(exc))
+        await _create_notification(
+            user_id,
+            "scheduled_publish_failed",
+            "Echec de la publication programmee",
+            f"Votre publication {_SOCIAL_POST_PLATFORM_DISPLAY_NAMES.get(platform, platform.capitalize())} programmee a echoue. Reessayez ou contactez le support si le probleme persiste.",
+            data={"job_id": job_id, "platform": platform},
+        )
 
 
 async def _process_due_annual_credit_refills() -> None:

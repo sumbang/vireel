@@ -547,7 +547,7 @@ export default function SocialPostComposerModal({ isOpen, onClose, onCreated }) 
                     <p className="mb-4 text-[11px] text-slate-500 dark:text-zinc-400">
                         {t(
                             "social.postComposerStoryHint",
-                            "Facebook, Instagram et YouTube (en tant que Short) uniquement -- TikTok n'a pas d'API pour ses stories, LinkedIn n'a pas de stories."
+                            "Facebook, Instagram et YouTube (en tant que Short) uniquement"
                         )}
                     </p>
                 ) : null}

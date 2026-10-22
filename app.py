@@ -10346,6 +10346,9 @@ def _sync_customer_default_payment_method(stripe_subscription_id: Optional[str],
         logger.warning("Failed to sync default payment method for customer %s", stripe_customer_id)
 
 
+FILM_SUMMARY_FAILED_NOTIFICATION_TITLE = "Echec du resume de film"
+
+
 async def _create_notification(
     user_id: str, type_: str, title: str, body: str = "", data: Optional[Dict[str, Any]] = None,
 ) -> None:
@@ -15208,7 +15211,7 @@ async def _run_film_summary_render_job(
         )
         await reel_job_manager.refund_reservation(job_id, user_id, render_required_credits, operation_type=film_summary.CREDIT_OPERATION_TYPE)
         await _create_notification(
-            user_id, "film_summary_failed", "Echec du resume de film", str(exc) or "Le rendu de votre resume de film a echoue.",
+            user_id, "film_summary_failed", FILM_SUMMARY_FAILED_NOTIFICATION_TITLE, str(exc) or "Le rendu de votre resume de film a echoue.",
             data={"job_id": job_id, "project_id": project_id, "film_summary_id": film_summary_id},
         )
     except Exception as exc:  # noqa: BLE001
@@ -15220,7 +15223,7 @@ async def _run_film_summary_render_job(
         )
         await reel_job_manager.refund_reservation(job_id, user_id, render_required_credits, operation_type=film_summary.CREDIT_OPERATION_TYPE)
         await _create_notification(
-            user_id, "film_summary_failed", "Echec du resume de film",
+            user_id, "film_summary_failed", FILM_SUMMARY_FAILED_NOTIFICATION_TITLE,
             "Le rendu de votre resume de film a echoue. Reessayez ou contactez le support si le probleme persiste.",
             data={"job_id": job_id, "project_id": project_id, "film_summary_id": film_summary_id},
         )
@@ -15723,7 +15726,7 @@ async def _handle_film_summary_validation_failure(
     await _create_notification(
         user_id,
         "film_summary_failed",
-        "Echec du resume de film",
+        FILM_SUMMARY_FAILED_NOTIFICATION_TITLE,
         str(exc) or "La generation de votre resume de film a echoue.",
         data={"job_id": job_id, "project_id": project_id, "film_summary_id": film_summary_id},
     )
@@ -15743,7 +15746,7 @@ async def _handle_film_summary_unexpected_failure(
     await _create_notification(
         user_id,
         "film_summary_failed",
-        "Echec du resume de film",
+        FILM_SUMMARY_FAILED_NOTIFICATION_TITLE,
         "La generation de votre resume de film a echoue. Reessayez ou contactez le support si le probleme persiste.",
         data={"job_id": job_id, "project_id": project_id, "film_summary_id": film_summary_id},
     )

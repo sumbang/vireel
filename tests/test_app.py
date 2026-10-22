@@ -2410,11 +2410,13 @@ def test_reset_caption_style_history_falls_back_without_default_version(monkeypa
 
 def test_resolve_accounts_for_publish_rejects_instagram_for_anonymous_story_set(monkeypatch):
     # Anonymous stories may only be published to Facebook/LinkedIn accounts
-    # (the user's explicit ask), unlike reels/captions' full platform list.
+    # (the user's explicit ask), unlike reels/captions' full platform list
+    # and unlike the composer's own _SOCIAL_POST_PLATFORMS (which now also
+    # includes Instagram/TikTok/YouTube).
     app = _import_app_with_stubs(monkeypatch)
     monkeypatch.setattr(app, "_get_social_account_by_id", AsyncMock(return_value={"id": "acct-1", "platform": "instagram"}))
 
-    coro = app._resolve_accounts_for_publish("u1", ["acct-1"], app._SOCIAL_POST_PLATFORMS)
+    coro = app._resolve_accounts_for_publish("u1", ["acct-1"], app._ANONYMOUS_STORY_PLATFORMS)
     with pytest.raises(app.HTTPException) as exc:
         asyncio.run(coro)
     assert exc.value.status_code == 400
@@ -8936,8 +8938,11 @@ def test_resolve_accounts_for_publish_rejects_unowned_or_missing_account(monkeyp
 
 
 def test_resolve_accounts_for_publish_rejects_unsupported_platform(monkeypatch):
+    # tiktok is now a valid _SOCIAL_POST_PLATFORMS target (composer opened
+    # up to Instagram/TikTok/YouTube) -- pinterest stays genuinely
+    # unsupported by any publish surface.
     app = _import_app_with_stubs(monkeypatch)
-    monkeypatch.setattr(app, "_get_social_account_by_id", AsyncMock(return_value={"id": "acct-1", "platform": "tiktok"}))
+    monkeypatch.setattr(app, "_get_social_account_by_id", AsyncMock(return_value={"id": "acct-1", "platform": "pinterest"}))
 
     coro = app._resolve_accounts_for_publish("u1", ["acct-1"], app._SOCIAL_POST_PLATFORMS)
     with pytest.raises(app.HTTPException) as exc_info:
@@ -9003,7 +9008,7 @@ def test_create_social_post_rejects_unsupported_platform_account(monkeypatch):
     monkeypatch.setattr(app, "_assert_user_has_active_subscription_for_publish", AsyncMock())
     monkeypatch.setattr(app, "_assert_user_can_publish", AsyncMock())
     monkeypatch.setattr(app, "_get_user_max_comments_per_post", AsyncMock(return_value=99))
-    monkeypatch.setattr(app, "_get_social_account_by_id", AsyncMock(return_value={"id": "acct-1", "platform": "tiktok"}))
+    monkeypatch.setattr(app, "_get_social_account_by_id", AsyncMock(return_value={"id": "acct-1", "platform": "pinterest"}))
 
     with TestClient(app.app) as client:
         resp = client.post(
@@ -9012,6 +9017,268 @@ def test_create_social_post_rejects_unsupported_platform_account(monkeypatch):
             headers=_auth_headers("u1"),
         )
     assert resp.status_code == 400
+
+
+def test_create_social_post_rejects_text_only_for_instagram_tiktok_youtube(monkeypatch):
+    # Instagram/TikTok/YouTube accounts are valid composer targets (see
+    # _SOCIAL_POST_PLATFORMS), but none of the three accept a text-only
+    # post -- _validate_social_post_media_for_accounts must reject this
+    # up front rather than only after _PLATFORM_HANDLERS fails.
+    app = _import_app_with_stubs(monkeypatch)
+    monkeypatch.setattr(app, "_assert_user_has_active_subscription_for_publish", AsyncMock())
+    monkeypatch.setattr(app, "_assert_user_can_publish", AsyncMock())
+    monkeypatch.setattr(app, "_get_user_max_comments_per_post", AsyncMock(return_value=99))
+
+    for platform in ("instagram", "tiktok", "youtube"):
+        monkeypatch.setattr(app, "_get_social_account_by_id", AsyncMock(return_value={"id": "acct-1", "platform": platform}))
+        with TestClient(app.app) as client:
+            resp = client.post(
+                "/api/social/posts",
+                json={"text": "Hello", "account_ids": ["acct-1"]},
+                headers=_auth_headers("u1"),
+            )
+        assert resp.status_code == 400, platform
+        assert "texte seul" in resp.json()["detail"], platform
+
+
+def test_create_social_post_rejects_photo_for_youtube(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+    monkeypatch.setattr(app, "_assert_user_has_active_subscription_for_publish", AsyncMock())
+    monkeypatch.setattr(app, "_assert_user_can_publish", AsyncMock())
+    monkeypatch.setattr(app, "_get_user_max_comments_per_post", AsyncMock(return_value=99))
+    monkeypatch.setattr(app, "_get_social_account_by_id", AsyncMock(return_value={"id": "acct-1", "platform": "youtube"}))
+
+    with TestClient(app.app) as client:
+        resp = client.post(
+            "/api/social/posts",
+            json={"text": "Hello", "account_ids": ["acct-1"], "media_url": "https://example.com/photo.jpg", "media_type": "image"},
+            headers=_auth_headers("u1"),
+        )
+    assert resp.status_code == 400
+    assert "video" in resp.json()["detail"]
+
+
+def test_create_social_post_allows_video_for_instagram_tiktok_youtube(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+    monkeypatch.setattr(app, "_assert_user_has_active_subscription_for_publish", AsyncMock())
+    monkeypatch.setattr(app, "_assert_user_can_publish", AsyncMock())
+    monkeypatch.setattr(app, "_get_user_max_comments_per_post", AsyncMock(return_value=99))
+    monkeypatch.setattr(app, "_resolve_user_job_priority", AsyncMock(return_value=1))
+    monkeypatch.setattr(app, "is_supabase_configured", lambda: True)
+    monkeypatch.setattr(app, "get_valid_token", AsyncMock(return_value="page-token"))
+    monkeypatch.setattr(app, "publish_post", AsyncMock(return_value={"id": "post-1"}))
+    monkeypatch.setattr(app, "_insert_publish_job", AsyncMock(return_value="job-1"))
+    monkeypatch.setattr(app, "_update_publish_job_status", AsyncMock())
+
+    for platform in ("instagram", "tiktok", "youtube"):
+        monkeypatch.setattr(app, "_get_social_account_by_id", AsyncMock(return_value=_social_post_account(platform)))
+        with TestClient(app.app) as client:
+            resp = client.post(
+                "/api/social/posts",
+                json={"text": "Hello", "account_ids": ["acct-1"], "media_url": "https://example.com/video.mp4", "media_type": "video"},
+                headers=_auth_headers("u1"),
+            )
+        assert resp.status_code == 200, platform
+        assert resp.json()["results"]["acct-1"]["success"] is True, platform
+
+
+def test_create_social_post_rejects_tiktok_and_linkedin_for_story_type(monkeypatch):
+    # TikTok has no Stories API support and LinkedIn has no Stories feature
+    # at all -- _SOCIAL_POST_STORY_PLATFORMS must exclude both even though
+    # they're valid targets for a regular "post".
+    app = _import_app_with_stubs(monkeypatch)
+    monkeypatch.setattr(app, "_assert_user_has_active_subscription_for_publish", AsyncMock())
+    monkeypatch.setattr(app, "_get_user_max_comments_per_post", AsyncMock(return_value=99))
+
+    for platform in ("tiktok", "linkedin"):
+        monkeypatch.setattr(app, "_get_social_account_by_id", AsyncMock(return_value=_social_post_account(platform)))
+        with TestClient(app.app) as client:
+            resp = client.post(
+                "/api/social/posts",
+                json={
+                    "text": "Hello", "account_ids": ["acct-1"], "post_type": "story",
+                    "media_url": "https://example.com/video.mp4", "media_type": "video",
+                },
+                headers=_auth_headers("u1"),
+            )
+        assert resp.status_code == 400, platform
+
+
+def test_create_social_post_rejects_text_only_story_for_facebook(monkeypatch):
+    # Unlike a regular post, Facebook also requires media for a story --
+    # none of its Stories APIs (video_stories/photo_stories) accept a
+    # text-only story.
+    app = _import_app_with_stubs(monkeypatch)
+    monkeypatch.setattr(app, "_assert_user_has_active_subscription_for_publish", AsyncMock())
+    monkeypatch.setattr(app, "_get_user_max_comments_per_post", AsyncMock(return_value=99))
+    monkeypatch.setattr(app, "_assert_user_can_publish", AsyncMock())
+    monkeypatch.setattr(app, "_get_social_account_by_id", AsyncMock(return_value=_social_post_account("facebook")))
+
+    with TestClient(app.app) as client:
+        resp = client.post(
+            "/api/social/posts",
+            json={"text": "Hello", "account_ids": ["acct-1"], "post_type": "story"},
+            headers=_auth_headers("u1"),
+        )
+    assert resp.status_code == 400
+    assert "stories" in resp.json()["detail"]
+
+
+def test_create_social_post_allows_story_for_facebook_instagram_youtube(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+    monkeypatch.setattr(app, "_assert_user_has_active_subscription_for_publish", AsyncMock())
+    monkeypatch.setattr(app, "_assert_user_can_publish", AsyncMock())
+    monkeypatch.setattr(app, "_get_user_max_comments_per_post", AsyncMock(return_value=99))
+    monkeypatch.setattr(app, "_resolve_user_job_priority", AsyncMock(return_value=1))
+    monkeypatch.setattr(app, "is_supabase_configured", lambda: True)
+    monkeypatch.setattr(app, "get_valid_token", AsyncMock(return_value="page-token"))
+    publish_post_mock = AsyncMock(return_value={"id": "story-1"})
+    monkeypatch.setattr(app, "publish_post", publish_post_mock)
+    monkeypatch.setattr(app, "_insert_publish_job", AsyncMock(return_value="job-1"))
+    monkeypatch.setattr(app, "_update_publish_job_status", AsyncMock())
+
+    for platform in ("facebook", "instagram", "youtube"):
+        monkeypatch.setattr(app, "_get_social_account_by_id", AsyncMock(return_value=_social_post_account(platform)))
+        with TestClient(app.app) as client:
+            resp = client.post(
+                "/api/social/posts",
+                json={
+                    "text": "Hello", "account_ids": ["acct-1"], "post_type": "story",
+                    "media_url": "https://example.com/video.mp4", "media_type": "video",
+                },
+                headers=_auth_headers("u1"),
+            )
+        assert resp.status_code == 200, platform
+        assert resp.json()["results"]["acct-1"]["success"] is True, platform
+
+    # The PublishRequest handed to publish_post must carry post_type="story"
+    # through to the dispatcher regardless of platform.
+    assert all(call.args[1].post_type == "story" for call in publish_post_mock.await_args_list)
+
+
+def test_publish_post_dispatches_story_handler(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+    monkeypatch.setattr(app, "get_valid_token", AsyncMock(return_value="token-1"))
+    story_handler_mock = AsyncMock(return_value={"id": "story-1"})
+    monkeypatch.setattr(app, "_PLATFORM_STORY_HANDLERS", {"facebook": story_handler_mock})
+
+    content = app.PublishRequest(user_id="u1", text="hi", post_type="story")
+    result = asyncio.run(app.publish_post({"platform": "facebook"}, content))
+
+    assert result == {"id": "story-1"}
+    story_handler_mock.assert_awaited_once()
+
+
+def test_publish_post_rejects_story_for_platform_without_story_handler(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+    monkeypatch.setattr(app, "get_valid_token", AsyncMock(return_value="token-1"))
+
+    content = app.PublishRequest(user_id="u1", text="hi", post_type="story")
+    coro = app.publish_post({"platform": "tiktok"}, content)
+    with pytest.raises(app.HTTPException) as exc:
+        asyncio.run(coro)
+    assert exc.value.status_code == 404
+
+
+def test_publish_to_instagram_video_story_uses_stories_media_type(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+    container_mock = AsyncMock(return_value={"id": "media-1"})
+    monkeypatch.setattr(app, "_publish_instagram_container", container_mock)
+
+    asyncio.run(app.publish_to_instagram_video_story("token-1", "ig-1", "https://example.com/video.mp4", "caption"))
+
+    container_mock.assert_awaited_once_with("token-1", "ig-1", "caption", "STORIES", "video_url", "https://example.com/video.mp4")
+
+
+def test_publish_to_instagram_photo_story_uses_stories_media_type(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+    container_mock = AsyncMock(return_value={"id": "media-1"})
+    monkeypatch.setattr(app, "_publish_instagram_container", container_mock)
+
+    asyncio.run(app.publish_to_instagram_photo_story("token-1", "ig-1", "https://example.com/photo.jpg", "caption"))
+
+    container_mock.assert_awaited_once_with("token-1", "ig-1", "caption", "STORIES", "image_url", "https://example.com/photo.jpg")
+
+
+def test_publish_to_facebook_photo_story_uploads_unpublished_then_publishes(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, url, data=None, headers=None):
+            request = app.httpx.Request("POST", url)
+            if url.endswith("/photos"):
+                assert data["published"] == "false"
+                return app.httpx.Response(200, json={"id": "photo-1"}, request=request)
+            if url.endswith("/photo_stories"):
+                assert data["photo_id"] == "photo-1"
+                return app.httpx.Response(200, json={"id": "story-1"}, request=request)
+            raise AssertionError(f"unexpected url {url}")
+
+    monkeypatch.setattr(app.httpx, "AsyncClient", _FakeAsyncClient)
+
+    result = asyncio.run(app.publish_to_facebook_photo_story("token-1", "page-1", "https://example.com/photo.jpg"))
+    assert result == {"id": "story-1"}
+
+
+def test_publish_to_facebook_video_story_full_flow(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, url, data=None, headers=None):
+            request = app.httpx.Request("POST", url)
+            if url.endswith("/video_stories") and (data or {}).get("upload_phase") == "start":
+                return app.httpx.Response(200, json={"video_id": "vid-1", "upload_url": "https://rupload.facebook.com/upload/vid-1"}, request=request)
+            if url == "https://rupload.facebook.com/upload/vid-1":
+                assert headers["file_url"] == "https://example.com/video.mp4"
+                assert headers["Authorization"] == "OAuth token-1"
+                return app.httpx.Response(200, json={"success": True}, request=request)
+            if url.endswith("/video_stories") and (data or {}).get("upload_phase") == "finish":
+                assert data["video_id"] == "vid-1"
+                return app.httpx.Response(200, json={"id": "story-1"}, request=request)
+            raise AssertionError(f"unexpected url/data {url} {data}")
+
+        async def get(self, url, params=None):
+            request = app.httpx.Request("GET", url)
+            return app.httpx.Response(200, json={"status": {"uploading_phase": {"status": "complete"}}}, request=request)
+
+    monkeypatch.setattr(app.httpx, "AsyncClient", _FakeAsyncClient)
+
+    result = asyncio.run(app.publish_to_facebook_video_story("token-1", "page-1", "https://example.com/video.mp4"))
+    assert result == {"id": "story-1"}
+
+
+def test_publish_youtube_story_appends_shorts_hashtag(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+    monkeypatch.setattr(app, "_resolve_youtube_video_path", AsyncMock(return_value="/tmp/video.mp4"))
+    monkeypatch.setattr(app, "_cleanup_temp_file", lambda *_: None)
+    upload_mock = AsyncMock(return_value={"id": "yt-1"})
+    monkeypatch.setattr(app, "upload_youtube_video", upload_mock)
+
+    content = app.PublishRequest(user_id="u1", video_url="https://example.com/video.mp4", description="My short", post_type="story")
+    result = asyncio.run(app._publish_youtube_story({"platform": "youtube"}, "token-1", content, "My short"))
+
+    assert result == {"id": "yt-1"}
+    upload_mock.assert_awaited_once()
+    args = upload_mock.await_args.args
+    assert "#Shorts" in args[3]
 
 
 def test_create_social_post_publishes_now_and_posts_comments(monkeypatch):

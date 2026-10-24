@@ -112,15 +112,14 @@ SEGMENT_TYPE_VOICE_OVER = "voice_over"
 # narration), so no original film dialogue or audio is ever heard.
 SEGMENT_TYPES = (SEGMENT_TYPE_VOICE_OVER,)
 
-# Ideal ceiling on a film summary's total runtime: "dans l'ideal le resume
-# dois etre de moins de 5mn, mais jamais cela deborde il ne dois pas y
-# avoir de bloquant" -- kept as a changeable env-configurable constant,
-# same convention as FILM_SUMMARY_PLANNING_MODEL below, but deliberately
+# Ideal ceiling on a film summary's total runtime: "dans l'ideal cela ne
+# dois pas depasser 8mn, mais jamais cela deborde il ne dois pas y avoir
+# de bloquant" -- kept as a changeable env-configurable constant, same
+# convention as FILM_SUMMARY_PLANNING_MODEL below, but deliberately
 # non-blocking: going over it only ever adds a warning in
-# validate_edit_plan_content (every caller -- generate_edit_plan, and the
-# /validate and /render endpoints that re-run that same validator -- still
-# accepts the plan).
-FILM_SUMMARY_MAX_PLAN_DURATION_MS = int(os.environ.get("FILM_SUMMARY_MAX_PLAN_DURATION_MS", str(5 * 60 * 1000)))
+# validate_edit_plan_content (every caller -- generate_edit_plan and the
+# automatic post-analysis realignment -- still accepts the plan).
+FILM_SUMMARY_MAX_PLAN_DURATION_MS = int(os.environ.get("FILM_SUMMARY_MAX_PLAN_DURATION_MS", str(8 * 60 * 1000)))
 
 EDIT_PLAN_SCHEMA_VERSION = "1.0"
 

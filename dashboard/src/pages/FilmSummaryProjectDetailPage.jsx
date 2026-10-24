@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { AlertCircle, Ban, Download, Loader2, RefreshCw, Share2, Trash2 } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
-import { getApiUrl, fetchAppConfig } from "../config";
+import { getApiUrl } from "../config";
 import { getAuthHeaders } from "../lib/apiAuth";
 import { useAuth } from "../state/AuthContext";
 import { useTranslation } from "../state/LanguageContext";
@@ -9,22 +9,26 @@ import { errorMessageForCode } from "../lib/filmSummary";
 import { describePublishError } from "../lib/publishErrors";
 import { describeMediaAvailability } from "../lib/mediaAvailability";
 import FilmSummaryProcessingPanel from "../components/FilmSummaryProcessingPanel";
-import FilmSummaryReviewPanel from "../components/FilmSummaryReviewPanel";
 import SharePostModal from "../components/SharePostModal";
 import Breadcrumbs from "../components/Breadcrumbs";
 
 // Statuses for which the film summary's own job_id is still meaningful to
-// poll via the generic /api/status/{job_id} endpoint -- "rendering" reuses
-// this same row field for the *second* (render) job_id, set by POST
-// .../render (see app.py's render_film_summary_endpoint).
+// poll via the generic /api/status/{job_id} endpoint. Analysis and
+// rendering now chain automatically under a single job_id (see app.py's
+// _finalize_film_summary_analysis) -- "rendering" is simply where that same
+// job_id's pipeline has gotten to, not a second job.
 const ACTIVE_JOB_STATUSES = ["draft", "queued", "processing", "rendering"];
 
 // Same "project detail" role as AnonymousStoryProjectDetailPage, but the
-// film summary goes through a much richer state machine (see
-// FilmSummaryStatus in film_summary.py) instead of a single generated-text
-// editor -- this page is the state machine's single source of truth,
-// switching between a progress panel, a rejection/failure view, the
-// awaiting_review editor and the completed player.
+// film summary goes through a richer state machine (see FilmSummaryStatus
+// in film_summary.py) instead of a single generated-text editor -- this
+// page is the state machine's single source of truth, switching between a
+// progress panel, a rejection/failure view and the completed player.
+// Analysis and rendering run as one continuous automatic job with no
+// manual review step in between (a pre-existing row could in theory still
+// carry the legacy "awaiting_review" status from before this; it simply
+// falls through to no matching panel below, leaving only the breadcrumbs/
+// delete button visible).
 export default function FilmSummaryProjectDetailPage() {
     const { projectId } = useParams();
     const { user } = useAuth();
@@ -39,8 +43,6 @@ export default function FilmSummaryProjectDetailPage() {
     const [cancelling, setCancelling] = useState(false);
     const [retrying, setRetrying] = useState(false);
     const [deleting, setDeleting] = useState(false);
-    const [allowedVoices, setAllowedVoices] = useState([]);
-    const [defaultVoice, setDefaultVoice] = useState("cedar");
 
     const [showShareModal, setShowShareModal] = useState(false);
     const [shareTitle, setShareTitle] = useState("");
@@ -50,20 +52,6 @@ export default function FilmSummaryProjectDetailPage() {
     const [scheduleDate, setScheduleDate] = useState("");
     const [sharing, setSharing] = useState(false);
     const [shareResult, setShareResult] = useState(null);
-
-    useEffect(() => {
-        let active = true;
-        fetchAppConfig()
-            .then((cfg) => {
-                if (!active || !cfg) return;
-                if (Array.isArray(cfg.filmSummaryAllowedVoices)) setAllowedVoices(cfg.filmSummaryAllowedVoices);
-                if (cfg.filmSummaryDefaultVoice) setDefaultVoice(cfg.filmSummaryDefaultVoice);
-            })
-            .catch(() => {});
-        return () => {
-            active = false;
-        };
-    }, []);
 
     const loadFilmSummary = async () => {
         if (!projectId || !user?.id) return;
@@ -426,21 +414,6 @@ export default function FilmSummaryProjectDetailPage() {
                         <div className="space-y-3 rounded-2xl border border-slate-300 dark:border-white/10 bg-white/5 p-5">
                             <h3 className="text-lg font-bold text-slate-700 dark:text-zinc-200">{t("filmSummary.statusCancelled", "Annule")}</h3>
                             {deleteButton}
-                        </div>
-                    ) : null}
-
-                    {status === "awaiting_review" ? (
-                        <div className="space-y-4">
-                            <FilmSummaryReviewPanel
-                                filmSummary={filmSummary}
-                                projectId={projectId}
-                                user={user}
-                                allowedVoices={allowedVoices}
-                                defaultVoice={defaultVoice}
-                                onRefresh={loadFilmSummary}
-                                onRegenerateAll={handleRetry}
-                                regenerating={retrying}
-                            />
                         </div>
                     ) : null}
 

@@ -13,6 +13,7 @@ create table if not exists public.user_data (
     user_id     uuid        not null references auth.users(id) on delete cascade,
     credit      numeric(14, 2) not null default 0,
     stockage    numeric(14, 6) not null default 0,  -- in GB
+    access_expiration_date timestamptz null default null,  -- if set, the date when the user's access to the service expires
     constraint user_data_user_id_unique unique (user_id)
 );
 

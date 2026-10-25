@@ -9,15 +9,19 @@
 -- into one comma-separated string rather than discarding it; edit it
 -- into a clean sentence per plan afterwards if needed.
 alter table if exists public.abonnement
-  alter column description type text
-  using case
-    when description is null then null
-    when jsonb_typeof(description) = 'array' then
-      array_to_string(array(select jsonb_array_elements_text(description)), ', ')
-    else description #>> '{}'
-  end;
+    add column if not exists description_text text;
 
--- The jsonb default ('[]') would otherwise get cast to the literal text
--- "[]" by the type change above -- not a sensible default for free text.
+update public.abonnement
+set description_text = case
+                           when description is null then null
+                           when jsonb_typeof(description) = 'array' then
+                               (select string_agg(value, ', ')
+                                from jsonb_array_elements_text(description) as t(value))
+                           else description #>> '{}'
+    end;
+
 alter table if exists public.abonnement
-  alter column description drop default;
+drop column description;
+
+alter table if exists public.abonnement
+    rename column description_text to description;

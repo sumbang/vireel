@@ -1,100 +1,15 @@
 import React, {useEffect, useState} from "react";
-import {Check, X, CreditCardIcon, Star, Crown, Sparkles, Zap, Building2, Loader2, Coins, Plus, Minus, MessageCircle, Clock} from "lucide-react";
+import {Check, CreditCardIcon, Loader2, Coins, Plus, Minus, Clock} from "lucide-react";
 import {getApiUrl} from "../config.js";
 import { getAuthHeaders } from "../lib/apiAuth";
-import { annualSavingsAmount, computeAnnualPrice, normalizeAnnualDiscountPercent } from "../lib/billing";
+import { normalizeAnnualDiscountPercent } from "../lib/billing";
 import { daysUntilDate } from "../lib/formatting";
 import { useAuth } from "../state/AuthContext";
 import { useUserCredits } from "../state/UserCreditsContext";
 import { useTranslation } from "../state/LanguageContext";
-
-// Every value here must be a complete, literal Tailwind class string --
-// Tailwind's build-time scanner only picks up classes it can see written
-// out in full in source files, so a template literal like
-// `bg-gradient-to-br from-${plan.color}-500/30` (the previous approach,
-// used directly in the JSX below) can never work: whatever color name
-// comes back from the DB, Tailwind never generates that class, so the
-// icon chip silently rendered with no gradient at all, for every color.
-const colorStyles = {
-    zinc: {
-        border: "border-zinc-500/20",
-        bg: "bg-zinc-500/10",
-        gradient: "bg-gradient-to-br from-zinc-500/30 to-zinc-700/30",
-        icon: "text-slate-700 dark:text-zinc-300",
-        button: "border-zinc-500/20 bg-zinc-500/10 text-slate-700 dark:text-zinc-300 hover:bg-zinc-500/15",
-        check: "text-slate-500 dark:text-zinc-400",
-    },
-    blue: {
-        border: "border-blue-500/30",
-        bg: "bg-blue-500/10",
-        gradient: "bg-gradient-to-br from-blue-500/30 to-blue-700/30",
-        // A dark-mode-only shade (e.g. text-blue-300 with no light-mode
-        // pairing) sits almost invisibly light against this page's light
-        // background -- every color below now pairs a readable light-mode
-        // shade with its dark-mode one, matching zinc's existing pattern.
-        icon: "text-blue-700 dark:text-blue-300",
-        button: "border-blue-500/20 bg-blue-500/10 text-blue-700 dark:text-blue-300 hover:bg-blue-500/15",
-        check: "text-blue-600 dark:text-blue-400",
-    },
-    purple: {
-        border: "border-purple-500/20",
-        bg: "bg-purple-500/10",
-        gradient: "bg-gradient-to-br from-purple-500/30 to-purple-700/30",
-        icon: "text-purple-700 dark:text-purple-300",
-        button: "border-purple-500/20 bg-purple-500/10 text-purple-700 dark:text-purple-300 hover:bg-purple-500/15",
-        check: "text-purple-600 dark:text-purple-400",
-    },
-    amber: {
-        border: "border-amber-500/30",
-        bg: "bg-amber-500/10",
-        gradient: "bg-gradient-to-br from-amber-500/30 to-amber-700/30",
-        icon: "text-amber-700 dark:text-amber-300",
-        button: "border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300 hover:bg-amber-500/15",
-        check: "text-amber-600 dark:text-amber-400",
-    },
-    green: {
-        border: "border-emerald-500/30",
-        bg: "bg-emerald-500/10",
-        gradient: "bg-gradient-to-br from-emerald-500/30 to-emerald-700/30",
-        icon: "text-emerald-700 dark:text-emerald-300",
-        button: "border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/15",
-        check: "text-emerald-600 dark:text-emerald-400",
-    },
-    red: {
-        border: "border-rose-500/30",
-        bg: "bg-rose-500/10",
-        gradient: "bg-gradient-to-br from-rose-500/30 to-rose-700/30",
-        icon: "text-rose-700 dark:text-rose-300",
-        button: "border-rose-500/20 bg-rose-500/10 text-rose-700 dark:text-rose-300 hover:bg-rose-500/15",
-        check: "text-rose-600 dark:text-rose-400",
-    },
-};
-// The abonnement table's "icon" column hasn't reliably matched any
-// string this page recognizes (see iconMap below), leaving every plan to
-// fall back to the same Star icon -- indistinguishable from one another.
-// Keying on the plan's exact name instead is the one mapping guaranteed
-// to be right, since it's the one actually confirmed plan-by-plan.
-const planIconByName = {
-    "ViReel Discover": Star,
-    "ViReel Publish": Sparkles,
-    "ViReel Creator": Crown,
-    "ViReel Studio": Building2,
-};
-// A plan whose "color" column doesn't match any key above (e.g. a newly
-// added plan, or a value not yet mapped) falls back here instead of
-// crashing on `styles.border`.
-const defaultColorStyle = colorStyles.zinc;
-
-// Keyed defensively on common casings (Crown/crown) since the exact
-// string in the DB's "icon" column isn't guaranteed to match a
-// component's PascalCase export name.
-const iconMap = {
-    Crown: Crown, crown: Crown,
-    Star: Star, star: Star,
-    Sparkles: Sparkles, sparkles: Sparkles,
-    Zap: Zap, zap: Zap,
-    Building2: Building2, building2: Building2,
-};
+import PlanCard from "../components/PlanCard";
+import BillingIntervalToggle from "../components/BillingIntervalToggle";
+import { resolvePlanColorStyle } from "../lib/abonnementDisplay";
 
 export default function AbonnementPage() {
     const { t } = useTranslation();
@@ -266,32 +181,8 @@ export default function AbonnementPage() {
             {/* Billing interval toggle -- mirrors the active/inactive
                 button-pair pattern used by the credit-amount quick-picks
                 further down. */}
-            <div className="flex items-center gap-2 mb-8">
-                <button
-                    onClick={() => setBillingInterval("month")}
-                    className={`px-3 py-1.5 rounded-lg border text-sm font-medium transition ${
-                        billingInterval === "month"
-                            ? "border-amber-300 dark:border-yellow-400 bg-amber-100 dark:bg-yellow-400/10 text-amber-800 dark:text-yellow-300"
-                            : "border-slate-300 dark:border-white/10 bg-white/5 text-slate-700 dark:text-zinc-300 hover:border-slate-400 dark:hover:border-white/20"
-                    }`}
-                >
-                    {t("abonnement.billingMonthly", "Mensuel")}
-                </button>
-                <button
-                    onClick={() => setBillingInterval("year")}
-                    className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm font-medium transition ${
-                        billingInterval === "year"
-                            ? "border-amber-300 dark:border-yellow-400 bg-amber-100 dark:bg-yellow-400/10 text-amber-800 dark:text-yellow-300"
-                            : "border-slate-300 dark:border-white/10 bg-white/5 text-slate-700 dark:text-zinc-300 hover:border-slate-400 dark:hover:border-white/20"
-                    }`}
-                >
-                    {t("abonnement.billingAnnual", "Annuel")}
-                    {maxAnnualDiscount > 0 && (
-                        <span className="rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-300 px-1.5 py-0.5 text-[0.65rem] font-semibold">
-                            {t("abonnement.annualDiscountBadge", "jusqu'a -{{percent}}%", { percent: Math.round(maxAnnualDiscount) })}
-                        </span>
-                    )}
-                </button>
+            <div className="mb-8">
+                <BillingIntervalToggle billingInterval={billingInterval} onChange={setBillingInterval} maxAnnualDiscount={maxAnnualDiscount} t={t} />
             </div>
 
             {/* Plans -- responsive to however many plans the catalog has
@@ -317,119 +208,18 @@ export default function AbonnementPage() {
                 )}
 
                 {items.map((plan) => {
-                    const styles = colorStyles[plan.color] || defaultColorStyle;
-                    const Icon = planIconByName[plan.name] || iconMap[plan.icon] || Star;
-                    const buttonLabel = t("abonnement.choisir","Choisir");
-                    const commentCount = Number(plan.commentaire);
-                    const hasCommentCount = Number.isFinite(commentCount) && commentCount > 0;
-                    // description is a JSON array (same shape as features),
-                    // listed under its own "Fonctionnalites IA incluses dans
-                    // les credits" heading -- tolerate a plain string too in
-                    // case a row hasn't been migrated to the array shape yet.
-                    const descriptionItems = Array.isArray(plan.description)
-                        ? plan.description
-                        : (plan.description ? [plan.description] : []);
-                    const discountRate = normalizeAnnualDiscountPercent(plan.reduction_annuelle);
-                    const displayedPrice = billingInterval === "year"
-                        ? computeAnnualPrice(plan.price, discountRate)
-                        : plan.price;
-                    const savings = billingInterval === "year" ? annualSavingsAmount(plan.price, discountRate) : 0;
-
+                    const styles = resolvePlanColorStyle(plan);
                     return (
-                        <div
-                            key={plan.name}
-                            className={`relative flex flex-col rounded-2xl border ${styles.border} ${styles.bg} p-7 ${
-                                plan.highlighted ? "z-10 ring-2 ring-blue-500/40 scale-[1.02]" : ""
-                            } transition`}
-                        >
-                            {plan.highlighted && (
-                                <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-blue-500 px-3 py-1 text-xs font-semibold text-white">
-                                    {t("abonnement.populaire","Populaire")}
-                </span>
-                            )}
-
-                            {/* Icon + nom */}
-                            <div className="flex items-center gap-3 mb-2">
-                                <div className={`p-2 rounded-lg ${styles.gradient}`}>
-                                    <Icon size={20} className={styles.icon} />
-                                </div>
-                                <h2 className="text-lg font-bold">{plan.name}</h2>
-                            </div>
-
-                            {/* Cible */}
-                            {plan.cible && (
-                                <p className={`lowercase text-[0.65rem] font-medium mb-3 ${styles.icon}`}>
-                                    {plan.cible}
-                                </p>
-                            )}
-
-                            {/* Prix */}
-                            <div className="mb-6">
-                                <span className="text-3xl font-bold">{displayedPrice}€</span>
-                                <span className="text-slate-500 dark:text-zinc-400 text-sm"> / {billingInterval === "year" ? t("abonnement.an","an") : t("abonnement.mois","mois")}</span>
-                                {billingInterval === "year" && discountRate > 0 && (
-                                    <p className="mt-1 text-xs text-emerald-600 dark:text-emerald-400">
-                                        {t("abonnement.annualSavings", "Économisez {{amount}}€ par an", { amount: savings })}
-                                    </p>
-                                )}
-                            </div>
-
-                            {/* Fonctionnalites IA incluses dans les credits */}
-                            {descriptionItems.length > 0 && (
-                                <div className="mb-6">
-                                    <p className="text-xs font-semibold text-slate-700 dark:text-zinc-200 mb-2">
-                                        {t("abonnement.aiFeaturesHeading", "Fonctionnalités IA incluses dans les crédits")}
-                                    </p>
-                                    <ul className="flex flex-col gap-1.5">
-                                        {descriptionItems.map((item) => (
-                                            <li key={item} className="flex items-start gap-2 text-sm text-slate-700 dark:text-zinc-300">
-                                                <Check size={14} className={`${styles.check} mt-0.5 shrink-0`} />
-                                                <span>{item}</span>
-                                            </li>
-                                        ))}
-                                    </ul>
-                                </div>
-                            )}
-
-                            {/* Liste des services */}
-                            <ul className="flex flex-col gap-3 mb-8 flex-1">
-                                {hasCommentCount && (
-                                    <li className="flex items-start gap-2 text-sm text-slate-700 dark:text-zinc-300">
-                                        <MessageCircle size={16} className={`${styles.check} mt-0.5 shrink-0`} />
-                                        <span>{commentCount.toLocaleString()} {t("abonnement.commentsPerPost", "commentaires / publication")}</span>
-                                    </li>
-                                )}
-                                <li className="flex items-start gap-2 text-sm text-slate-700 dark:text-zinc-300">
-                                    {plan.statistique ? (
-                                        <>
-                                            <Check size={16} className={`${styles.check} mt-0.5 shrink-0`} />
-                                            <span>{t("abonnement.statsIncluded", "Statistiques sociales sur la page d'accueil")}</span>
-                                        </>
-                                    ) : (
-                                        <>
-                                            <X size={16} className="text-slate-400 dark:text-zinc-600 mt-0.5 shrink-0" />
-                                            <span className="text-slate-400 dark:text-zinc-500">{t("abonnement.statsExcluded", "Pas de statistiques sociales sur la page d'accueil")}</span>
-                                        </>
-                                    )}
-                                </li>
-                                {plan.features.map((feature) => (
-                                    <li key={feature} className="flex items-start gap-2 text-sm text-slate-700 dark:text-zinc-300">
-                                        <Check size={16} className={`${styles.check} mt-0.5 shrink-0`} />
-                                        <span>{feature}</span>
-                                    </li>
-                                ))}
-                            </ul>
-
-                            {/* Bouton */}
+                        <PlanCard key={plan.name} plan={plan} billingInterval={billingInterval} t={t}>
                             <button
                                 onClick={() => handleCheckout(plan)}
                                 disabled={!user?.id || loadingPlanId === plan.id}
-                                className={`mt-auto flex items-center justify-center gap-2 rounded-2xl border px-4 py-3 text-sm font-semibold transition ${styles.button}`}
+                                className={`flex w-full items-center justify-center gap-2 rounded-2xl border px-4 py-3 text-sm font-semibold transition ${styles.button}`}
                             >
                                 {loadingPlanId === plan.id ? <Loader2 size={18} className="animate-spin" /> : <CreditCardIcon size={18} />}
-                                {loadingPlanId === plan.id ? t("abonnement.redirection","Redirection...") : buttonLabel}
+                                {loadingPlanId === plan.id ? t("abonnement.redirection","Redirection...") : t("abonnement.choisir","Choisir")}
                             </button>
-                        </div>
+                        </PlanCard>
                     );
                 })}
             </div>

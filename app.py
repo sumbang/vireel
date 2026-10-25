@@ -18,6 +18,7 @@ import ipaddress
 import socket
 import sys
 import types
+from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta, date
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
@@ -326,6 +327,27 @@ ANONYMOUS_STORIES_ENABLED = os.environ.get("ANONYMOUS_STORIES_ENABLED", "true").
 ANONYMOUS_STORY_MAX_DURATION_MINUTES = float(os.environ.get("ANONYMOUS_STORY_MAX_DURATION", "180"))
 STORY_JOB_MAX_ATTEMPTS = 1  # no dedicated retry worker for this queue -- see _run_anonymous_story_job
 
+# Social platform feature toggles: let ops disable one integration without a
+# deploy, independently of whether its OAuth credentials are configured.
+#
+# INSTAGRAM_ENABLED: Meta has refused this app's Instagram scopes
+# (instagram_business_basic, instagram_business_content_publish,
+# instagram_business_manage_insights) under App Review -- this disables
+# connecting (and reconnecting) an Instagram account entirely (see
+# _resolve_platform_config) until that's resolved, instead of sending users
+# through an OAuth flow that Meta will reject.
+INSTAGRAM_ENABLED = os.environ.get("INSTAGRAM_ENABLED", "true").lower() in ("1", "true", "yes")
+# LINKEDIN_INSIGHTS_ENABLED: gates only the "linkedin_analytics" pseudo-
+# platform (its own separate developer app, r_member_postAnalytics -- see
+# PLATFORM_CONFIG) -- connecting/reconnecting it (_resolve_platform_config)
+# and its insights sync (_INSIGHTS_SUPPORTED_PLATFORMS). Never affects the
+# regular "linkedin" publishing platform.
+LINKEDIN_INSIGHTS_ENABLED = os.environ.get("LINKEDIN_INSIGHTS_ENABLED", "true").lower() in ("1", "true", "yes")
+# TIKTOK_INSIGHTS_ENABLED: gates only insights retrieval/sync for TikTok
+# (_INSIGHTS_SUPPORTED_PLATFORMS) -- never affects connecting a TikTok
+# account or publishing to it.
+TIKTOK_INSIGHTS_ENABLED = os.environ.get("TIKTOK_INSIGHTS_ENABLED", "true").lower() in ("1", "true", "yes")
+
 # Film Summary ("Resume de film") configuration -- spec section 4 "Variables
 # de configuration proposees". Every numeric limit is environment-driven
 # (never hardcoded) and re-exposed to the frontend via GET /api/config.
@@ -334,7 +356,7 @@ FILM_SUMMARY_MAX_SOURCE_DURATION_SECONDS = float(os.environ.get("FILM_SUMMARY_MA
 FILM_SUMMARY_MIN_SOURCE_DURATION_SECONDS = float(os.environ.get("FILM_SUMMARY_MIN_SOURCE_DURATION_SECONDS", "600"))
 FILM_SUMMARY_MAX_UPLOAD_SIZE_BYTES = float(os.environ.get("FILM_SUMMARY_MAX_UPLOAD_SIZE_BYTES", str(20 * 1024 ** 3)))
 FILM_SUMMARY_MIN_TARGET_DURATION_SECONDS = float(os.environ.get("FILM_SUMMARY_MIN_TARGET_DURATION_SECONDS", "180"))
-FILM_SUMMARY_MAX_TARGET_DURATION_SECONDS = float(os.environ.get("FILM_SUMMARY_MAX_TARGET_DURATION_SECONDS", "1200"))
+FILM_SUMMARY_MAX_TARGET_DURATION_SECONDS = float(os.environ.get("FILM_SUMMARY_MAX_TARGET_DURATION_SECONDS", "480"))
 FILM_SUMMARY_ALLOWED_MIME_TYPES = [
     v.strip() for v in os.environ.get(
         "FILM_SUMMARY_ALLOWED_MIME_TYPES", "video/mp4,video/quicktime,video/x-matroska,video/webm",
@@ -14178,23 +14200,6 @@ async def share_caption(caption_id: str, payload: ReelShareRequest, user_id: Ann
 # same convention as the anonymous-stories section above.
 # --------------------------------------------------------------------------
 
-class FilmSummaryPlanUpdateRequest(BaseModel):
-    plan: Dict[str, Any]
-
-
-class FilmSummaryRenderRequest(BaseModel):
-    voice_id: Optional[str] = None
-
-
-class FilmSummaryAudioSettingsUpdateRequest(BaseModel):
-    subtitles_enabled: Optional[bool] = None
-    subtitle_style: Optional[Dict[str, Any]] = None
-
-
-class FilmSummaryTranslateNarrationRequest(BaseModel):
-    narration_language: str
-
-
 def _film_summary_media_urls(row: Dict[str, Any], bucket_name: str) -> Dict[str, str]:
     """The review panel's video preview and clip-swap picker need the
     original source video (not just the preview/final render) to let the
@@ -14379,31 +14384,21 @@ async def _resolve_film_summary_source(
 
 
 async def _resolve_film_summary_request_fields(
-    request: Request, title: Optional[str], target_duration_seconds: Optional[float],
-    source_language: Optional[str], narration_language: Optional[str], narration_style: Optional[str],
-    voice_id: Optional[str],
-) -> Tuple[Optional[str], Optional[float], Optional[str], Optional[str], Optional[str], Optional[str]]:
+    request: Request, narration_style: Optional[str], voice_id: Optional[str], add_subtitles: Optional[str],
+) -> Tuple[Optional[str], Optional[str], Optional[str]]:
     """JSON-body submissions (YouTube link, no multipart) carry the extra
     fields in the body instead of Form() -- same content-type branching as
     _resolve_anonymous_story_page_context. Pulled out of create_film_summary
     to keep its cognitive complexity down."""
     content_type = request.headers.get("content-type", "")
     if _CONTENT_TYPE_JSON not in content_type:
-        return title, target_duration_seconds, source_language, narration_language, narration_style, voice_id
+        return narration_style, voice_id, add_subtitles
     body = await request.json()
     return (
-        body.get("title", title),
-        body.get("target_duration_seconds", target_duration_seconds),
-        body.get("source_language", source_language),
-        body.get("narration_language", narration_language),
         body.get("narration_style", narration_style),
         body.get("voice_id", voice_id),
+        body.get("add_subtitles", add_subtitles),
     )
-
-
-def _resolve_film_summary_title(title: Optional[str], source_title: str) -> str:
-    resolved = title or source_title or "Resume de film"
-    return resolved.strip()[:200]
 
 
 def _cleanup_film_summary_upload(input_path: Optional[str], output_dir: str) -> None:
@@ -14437,12 +14432,20 @@ def _validate_film_summary_technical_constraints_or_cleanup(
     return local_duration
 
 
-def _resolve_film_summary_target_duration(target_duration_seconds: Optional[float], local_duration: float) -> int:
-    if target_duration_seconds:
-        return int(target_duration_seconds)
+def _resolve_film_summary_target_duration(local_duration: float) -> int:
+    # Always auto-derived from the source's own length -- there is no user
+    # override in the single-step flow (see derive_target_duration_seconds's
+    # ~1/6 compression ratio, clamped to FILM_SUMMARY_MAX_TARGET_DURATION_
+    # SECONDS, 8 minutes by default).
     return film_summary.derive_target_duration_seconds(
         local_duration, FILM_SUMMARY_MIN_TARGET_DURATION_SECONDS, FILM_SUMMARY_MAX_TARGET_DURATION_SECONDS,
     )
+
+
+def _resolve_film_summary_add_subtitles(add_subtitles: Optional[Any]) -> bool:
+    if isinstance(add_subtitles, bool):
+        return add_subtitles
+    return str(add_subtitles).lower() in ("1", "true", "yes")
 
 
 def _row_field(row: Optional[Dict[str, Any]], key: str) -> Optional[Any]:
@@ -14459,8 +14462,9 @@ def _resolve_film_summary_narration_settings(narration_language: Optional[str], 
 
 async def _persist_film_summary_row(
     user_id: str, project_id: Optional[str], film_title: str, source_type: str, source_url_value: Optional[str],
-    source_s3_key: Optional[str], local_duration: float, resolved_target_duration: int, source_language: Optional[str],
-    resolved_narration_language: str, resolved_narration_style: str, resolved_voice_id: str, film_job_id: str,
+    source_s3_key: Optional[str], local_duration: float, resolved_target_duration: int,
+    resolved_narration_language: str, resolved_narration_style: str, resolved_voice_id: str,
+    subtitles_enabled: bool, film_job_id: str,
 ) -> Optional[Dict[str, Any]]:
     if not is_supabase_configured():
         return None
@@ -14474,15 +14478,19 @@ async def _persist_film_summary_row(
         # Truncating to an int here used to lose up to ~1s of precision --
         # a segment whose end_ms was valid against the full-precision
         # duration used for the original plan (_run_planning_and_validation_
-        # stages' duration_ms) could then fail render_film_summary_
-        # endpoint's "timecode hors limites" check, which recomputes
-        # source_duration_ms from this same stored value.
+        # stages' duration_ms) could then fail the render stage's "timecode
+        # hors limites" check, which recomputes source_duration_ms from
+        # this same stored value.
         "source_duration_seconds": float(local_duration or 0.0),
         "target_duration_seconds": resolved_target_duration,
-        "source_language": (source_language or "").strip()[:50] or None,
+        # source_language is always auto-detected from the audio now (no
+        # user input in the single-step flow) -- left unset here and
+        # filled in once transcription actually runs (see
+        # _run_transcription_and_scene_detection_stages).
         "narration_language": resolved_narration_language or None,
         "narration_style": resolved_narration_style,
         "voice_id": resolved_voice_id,
+        "subtitles_enabled": subtitles_enabled,
         "status": film_summary.FilmSummaryStatus.QUEUED,
         "stage": film_summary.FilmSummaryStage.UPLOADING,
         "job_id": film_job_id,
@@ -14496,12 +14504,9 @@ async def create_film_summary(
     file: Annotated[Optional[UploadFile], File()] = None,
     url: Annotated[Optional[str], Form()] = None,
     acknowledged: Annotated[Optional[str], Form()] = None,
-    title: Annotated[Optional[str], Form()] = None,
-    target_duration_seconds: Annotated[Optional[float], Form()] = None,
-    source_language: Annotated[Optional[str], Form()] = None,
-    narration_language: Annotated[Optional[str], Form()] = None,
     narration_style: Annotated[Optional[str], Form()] = None,
     voice_id: Annotated[Optional[str], Form()] = None,
+    add_subtitles: Annotated[Optional[str], Form()] = None,
 ):
     if not FILM_SUMMARY_ENABLED:
         raise HTTPException(status_code=404, detail=_FILM_SUMMARY_DISABLED)
@@ -14509,18 +14514,10 @@ async def create_film_summary(
     url, ack_flag = await _resolve_process_endpoint_url_and_ack(request, url, acknowledged)
     _validate_process_endpoint_inputs(url, file, ack_flag)
 
-    title, target_duration_seconds, source_language, narration_language, narration_style, voice_id = (
-        await _resolve_film_summary_request_fields(
-            request, title, target_duration_seconds, source_language, narration_language, narration_style, voice_id,
-        )
+    narration_style, voice_id, add_subtitles = await _resolve_film_summary_request_fields(
+        request, narration_style, voice_id, add_subtitles,
     )
-
-    try:
-        film_summary.validate_target_duration_seconds(
-            target_duration_seconds, FILM_SUMMARY_MIN_TARGET_DURATION_SECONDS, FILM_SUMMARY_MAX_TARGET_DURATION_SECONDS,
-        )
-    except film_summary.FilmSummaryValidationError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    resolved_add_subtitles = _resolve_film_summary_add_subtitles(add_subtitles)
 
     await _enforce_job_concurrency_limit(user_id)
 
@@ -14534,10 +14531,13 @@ async def create_film_summary(
     size_bytes = source["size_bytes"]
     source_type = source["source_type"]
     source_url_value = source["source_url_value"]
-    film_title = _resolve_film_summary_title(title, source["film_title"])
+    # Always filename/YouTube-title-derived -- same convention as reels and
+    # subtitles ("tu process comme sur les ajouts fonctions"), no user title
+    # input in the single-step flow.
+    film_title = (source["film_title"] or "Resume de film").strip()[:200]
 
     local_duration = _validate_film_summary_technical_constraints_or_cleanup(input_path, size_bytes, output_dir)
-    resolved_target_duration = _resolve_film_summary_target_duration(target_duration_seconds, local_duration)
+    resolved_target_duration = _resolve_film_summary_target_duration(local_duration)
 
     analysis_required_credits = _estimate_film_summary_analysis_required_credits(local_duration, float(size_bytes))
     await _reserve_film_summary_credits_or_cleanup(user_id, analysis_required_credits, input_path, output_dir)
@@ -14551,13 +14551,13 @@ async def create_film_summary(
     project_id = _row_field(project, "id")
     source_s3_key = _row_field(project, "source_s3_key")
 
-    resolved_narration_language, resolved_narration_style = _resolve_film_summary_narration_settings(narration_language, narration_style)
+    resolved_narration_language, resolved_narration_style = _resolve_film_summary_narration_settings(None, narration_style)
     resolved_voice_id = film_summary.resolve_tts_voice(voice_id, FILM_SUMMARY_TTS_DEFAULT_VOICE)
 
     film_row = await _persist_film_summary_row(
         user_id, project_id, film_title, source_type, source_url_value, source_s3_key, local_duration,
-        resolved_target_duration, source_language, resolved_narration_language, resolved_narration_style,
-        resolved_voice_id, film_job_id,
+        resolved_target_duration, resolved_narration_language, resolved_narration_style,
+        resolved_voice_id, resolved_add_subtitles, film_job_id,
     )
 
     await reel_job_manager.create_job(
@@ -14580,6 +14580,13 @@ async def create_film_summary(
     await reel_job_manager.enqueue_job(film_job_id)
 
     film_summary_id = _row_field(film_row, "id")
+    settings = FilmSummaryGenerationSettings(
+        target_duration_seconds=resolved_target_duration,
+        narration_language=resolved_narration_language,
+        narration_style=resolved_narration_style,
+        voice_id=resolved_voice_id,
+        subtitles_enabled=resolved_add_subtitles,
+    )
     _spawn_background_task(_run_film_summary_analysis_job(
         job_id=film_job_id,
         user_id=user_id,
@@ -14587,13 +14594,11 @@ async def create_film_summary(
         project_id=project_id,
         input_path=input_path,
         output_dir=output_dir,
+        source_s3_key=source_s3_key,
         local_duration=local_duration,
         size_bytes=float(size_bytes),
         analysis_required_credits=analysis_required_credits,
-        target_duration_seconds=resolved_target_duration,
-        narration_language=resolved_narration_language,
-        narration_style=resolved_narration_style,
-        source_language=source_language,
+        settings=settings,
     ))
 
     return {
@@ -14631,18 +14636,34 @@ async def _mark_film_summary_job_terminal(
             logger.warning(f"Failed to update project status to failed: {str(e)}")
 
 
+@dataclass
+class FilmSummaryGenerationSettings:
+    """Bundles the generation choices made once at creation/retry time
+    (target duration, language, narration style, voice, subtitles) that
+    then flow unchanged through the whole analysis -> render chain --
+    without this, each job-runner/finalize function in that chain would
+    need a near-identical handful of extra parameters on top of its own
+    (job_id, film_summary_id, paths, credits, ...), pushing several of them
+    past SonarQube's python:S107 13-parameter limit."""
+    target_duration_seconds: float
+    narration_language: str
+    narration_style: str
+    voice_id: str
+    subtitles_enabled: bool
+    source_language: str = ""
+    subtitle_style: Optional[Dict[str, Any]] = None
+
+
 async def _run_film_summary_analysis_job(
     job_id: str, user_id: str, film_summary_id: Optional[str], project_id: Optional[str],
-    input_path: str, output_dir: str, local_duration: float,
-    size_bytes: float, analysis_required_credits: float, target_duration_seconds: float,
-    narration_language: str, narration_style: str, source_language: Optional[str] = None,
+    input_path: str, output_dir: str, source_s3_key: Optional[str], local_duration: float,
+    size_bytes: float, analysis_required_credits: float, settings: FilmSummaryGenerationSettings,
 ) -> None:
     try:
         await reel_job_manager.start_job(job_id)
         await _run_film_summary_analysis_pipeline_stages(
-            job_id, user_id, film_summary_id, project_id, input_path,
-            local_duration, size_bytes, analysis_required_credits, target_duration_seconds,
-            narration_language, narration_style, source_language=source_language,
+            job_id, user_id, film_summary_id, project_id, input_path, output_dir, source_s3_key,
+            local_duration, size_bytes, analysis_required_credits, settings,
         )
     except film_summary.FilmSummaryValidationError as exc:
         await _handle_film_summary_validation_failure(exc, job_id, user_id, film_summary_id, project_id, analysis_required_credits)
@@ -14818,8 +14839,9 @@ async def _run_planning_and_validation_stages(
 
 async def _run_film_summary_analysis_pipeline_stages(
     job_id: str, user_id: str, film_summary_id: Optional[str], project_id: Optional[str], input_path: str,
-    local_duration: float, size_bytes: float, analysis_required_credits: float, target_duration_seconds: float,
-    narration_language: str, narration_style: str, source_language: Optional[str] = None,
+    output_dir: str, source_s3_key: Optional[str],
+    local_duration: float, size_bytes: float, analysis_required_credits: float,
+    settings: FilmSummaryGenerationSettings,
 ) -> None:
     # Niveau 1 technical validation already ran synchronously in
     # create_film_summary, before the job/credits reservation even
@@ -14831,15 +14853,15 @@ async def _run_film_summary_analysis_pipeline_stages(
     # "processing continues only if validation succeeds" for the one stage
     # that actually dominates cost.
     transcript_segments, scene_index, detected_language = await _run_transcription_and_scene_detection_stages(
-        job_id, user_id, film_summary_id, input_path, source_language=source_language,
+        job_id, user_id, film_summary_id, input_path, source_language=settings.source_language,
     )
     classification_usage = await _run_classification_gate(
-        job_id, user_id, film_summary_id, local_duration, narration_language or detected_language,
+        job_id, user_id, film_summary_id, local_duration, settings.narration_language or detected_language,
         input_path, transcript_segments, scene_index,
     )
     plan, validation_report, planning_usage = await _run_planning_and_validation_stages(
-        job_id, user_id, film_summary_id, local_duration, target_duration_seconds,
-        detected_language, narration_language, narration_style, transcript_segments, scene_index,
+        job_id, user_id, film_summary_id, local_duration, settings.target_duration_seconds,
+        detected_language, settings.narration_language, settings.narration_style, transcript_segments, scene_index,
     )
     total_usage = {
         "prompt_tokens": classification_usage.get("prompt_tokens", 0) + planning_usage.get("prompt_tokens", 0),
@@ -14848,6 +14870,7 @@ async def _run_film_summary_analysis_pipeline_stages(
     await _finalize_film_summary_analysis(
         job_id, user_id, film_summary_id, project_id, local_duration, size_bytes,
         analysis_required_credits, plan, validation_report, total_usage,
+        output_dir, source_s3_key, settings,
     )
 
 
@@ -14866,24 +14889,25 @@ async def _finalize_film_summary_analysis(
     job_id: str, user_id: str, film_summary_id: Optional[str], project_id: Optional[str],
     local_duration: float, size_bytes: float, analysis_required_credits: float,
     plan: Dict[str, Any], validation_report: Dict[str, Any], usage: Dict[str, Any],
+    output_dir: str, source_s3_key: Optional[str], settings: FilmSummaryGenerationSettings,
 ) -> None:
     cost_breakdown = _build_film_summary_analysis_cost_breakdown(local_duration, size_bytes, usage)
-    final_credits = float(cost_breakdown.get("final_credits") or 0.0)
+    analysis_final_credits = float(cost_breakdown.get("final_credits") or 0.0)
+    resolved_voice_id = film_summary.resolve_tts_voice(settings.voice_id, FILM_SUMMARY_TTS_DEFAULT_VOICE)
 
     if film_summary_id and is_supabase_configured():
         await supabase_update_film_summary(film_summary_id, user_id, {
-            "status": film_summary.FilmSummaryStatus.AWAITING_REVIEW,
-            "stage": film_summary.FilmSummaryStage.AWAITING_USER_REVIEW,
+            # No manual review pause in the single-step flow -- chain
+            # straight into rendering below instead of stopping here.
+            "status": film_summary.FilmSummaryStatus.RENDERING,
+            "stage": film_summary.FilmSummaryStage.GENERATING_VOICE,
             "edit_plan": plan,
             "validation_report": validation_report,
-            # target_duration_seconds is the authoritative target the PATCH
-            # /plan endpoint rebuilds from (film_summary.validate_edited_
-            # plan_patch never trusts the plan's own copy) -- keep it in
-            # sync with plan["target_duration_ms"], which realign_plan_
-            # target_duration may just have moved.
             "target_duration_seconds": _plan_target_duration_seconds(plan),
             "billing_details": cost_breakdown,
             "total_cost_usd": cost_breakdown.get("total_usd", 0.0),
+            "voice_id": resolved_voice_id,
+            "subtitles_enabled": settings.subtitles_enabled,
         })
         # No storage_delta here: the source video is transient (deleted once
         # the render finishes -- see _run_film_summary_render_pipeline_stages),
@@ -14891,7 +14915,7 @@ async def _finalize_film_summary_analysis(
         # Only the preview/final outputs the user actually keeps are billed
         # for storage (_finalize_film_summary_render).
         debit_ok = await reel_job_manager.debit_credits_for_job(
-            job_id=job_id, user_id=user_id, credits=final_credits,
+            job_id=job_id, user_id=user_id, credits=analysis_final_credits,
             operation_type=film_summary.CREDIT_OPERATION_TYPE, reserved_credits=analysis_required_credits,
         )
         if not debit_ok:
@@ -14903,13 +14927,37 @@ async def _finalize_film_summary_analysis(
         except Exception as e:
             logger.warning(f"Failed to update project {project_id} status: {str(e)}")
 
-    await reel_job_manager.complete_job(
-        job_id,
-        {"film_summary_id": film_summary_id, "project_id": project_id, "validation_report": validation_report},
-        actual_credit=final_credits,
-        cost_breakdown=cost_breakdown,
-        consumed_quota=1.0,
+    # Chain straight into rendering -- "en une seule etape, pas de
+    # generation manuelle": no more a user-triggered POST .../render after
+    # a manual review pause. This whole block is its own try/except so a
+    # render-phase failure is handled by the render-specific helpers below
+    # (which refund only the render reservation) and NEVER bubbles up to
+    # this function's caller, whose analysis-level except handlers would
+    # otherwise wrongly re-refund analysis_required_credits that were
+    # already correctly debited just above.
+    character_count = _total_narration_character_count(plan)
+    render_required_credits = _estimate_film_summary_render_required_credits(
+        _plan_target_duration_seconds(plan), character_count,
     )
+    if not await reel_job_manager.reserve_credits(user_id, render_required_credits):
+        await _handle_film_summary_render_validation_failure(
+            film_summary.FilmSummaryValidationError(
+                film_summary.FilmSummaryErrorCode.INSUFFICIENT_CREDITS,
+                "Credits insuffisants pour generer la video finale du resume.",
+            ),
+            job_id, user_id, film_summary_id, project_id, 0.0,  # nothing was actually reserved
+        )
+        return
+    try:
+        await _run_film_summary_render_pipeline_stages(
+            job_id, user_id, film_summary_id, project_id, source_s3_key, output_dir, plan, resolved_voice_id,
+            settings.narration_language, subtitles_enabled=settings.subtitles_enabled, subtitle_style=settings.subtitle_style,
+            render_required_credits=render_required_credits, analysis_actual_credits=analysis_final_credits,
+        )
+    except film_summary.FilmSummaryValidationError as exc:
+        await _handle_film_summary_render_validation_failure(exc, job_id, user_id, film_summary_id, project_id, render_required_credits)
+    except Exception as exc:  # noqa: BLE001
+        await _handle_film_summary_render_unexpected_failure(exc, job_id, user_id, film_summary_id, project_id, render_required_credits)
 
 
 @app.get("/api/film-summaries", responses={401: {"description": "Unauthorized"}, 403: {"description": "Forbidden"}, 503: {"description": "Service Unavailable"}})
@@ -14973,263 +15021,44 @@ async def get_film_summary_endpoint(film_summary_id: str, user_id: Annotated[str
     return _normalize_film_summary_row(row, include_content=True)
 
 
-@app.get("/api/film-summaries/{film_summary_id}/plan", responses={401: {"description": "Unauthorized"}, 403: {"description": "Forbidden"}, 404: {"description": "Not Found"}})
-async def get_film_summary_plan_endpoint(film_summary_id: str, user_id: Annotated[str, Depends(get_user_id_header)]):
-    row = await supabase_get_film_summary(film_summary_id, user_id)
-    if not row:
-        raise HTTPException(status_code=404, detail=_FILM_SUMMARY_NOT_FOUND)
-    return {
-        "edit_plan": row.get("edit_plan") or {},
-        "validation_report": row.get("validation_report") or {},
-        "scene_index": row.get("scene_index") or [],
-    }
-
-
-@app.patch("/api/film-summaries/{film_summary_id}/plan", responses={400: {"description": "Bad Request"}, 401: {"description": "Unauthorized"}, 403: {"description": "Forbidden"}, 404: {"description": "Not Found"}, 409: {"description": "Conflict"}})
-async def update_film_summary_plan_endpoint(
-    film_summary_id: str, payload: FilmSummaryPlanUpdateRequest, user_id: Annotated[str, Depends(get_user_id_header)],
-):
-    row = await supabase_get_film_summary(film_summary_id, user_id)
-    if not row:
-        raise HTTPException(status_code=404, detail=_FILM_SUMMARY_NOT_FOUND)
-    if row.get("status") != film_summary.FilmSummaryStatus.AWAITING_REVIEW:
-        raise HTTPException(status_code=409, detail="Plan can only be edited while awaiting review")
-
-    movie_metadata = (row.get("edit_plan") or {}).get("movie") or {}
-    target_duration_ms = int((row.get("target_duration_seconds") or 0) * 1000)
-    try:
-        normalized_plan = film_summary.validate_edited_plan_patch(
-            payload.plan, movie_metadata=movie_metadata, target_duration_ms=target_duration_ms,
-        )
-    except film_summary.FilmSummaryValidationError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    valid_scene_ids = [s.get("scene_id") for s in (row.get("scene_index") or [])]
-    # A narration edit can move the total enough to fall outside tolerance
-    # around the original target -- realign rather than block the user on a
-    # number their edit doesn't give them a direct way to hit exactly.
-    normalized_plan, validation_report = film_summary.realign_plan_target_duration(
-        normalized_plan, source_duration_ms=int((row.get("source_duration_seconds") or 0) * 1000),
-        valid_scene_ids=valid_scene_ids, duration_tolerance_ratio=FILM_SUMMARY_DURATION_TOLERANCE_RATIO,
-    )
-
-    updated = await supabase_update_film_summary(film_summary_id, user_id, {
-        "edit_plan": normalized_plan, "validation_report": validation_report,
-        "target_duration_seconds": _plan_target_duration_seconds(normalized_plan),
-    })
-    return _normalize_film_summary_row(updated, include_content=True)
-
-
-@app.patch("/api/film-summaries/{film_summary_id}/audio-settings", responses={400: {"description": "Bad Request"}, 401: {"description": "Unauthorized"}, 403: {"description": "Forbidden"}, 404: {"description": "Not Found"}, 409: {"description": "Conflict"}})
-async def update_film_summary_audio_settings_endpoint(
-    film_summary_id: str, payload: FilmSummaryAudioSettingsUpdateRequest, user_id: Annotated[str, Depends(get_user_id_header)],
-):
-    """Persists the user's subtitle toggle/style -- applied at render time
-    (see render_edit_plan / _run_film_summary_render_pipeline_stages).
-    Editable up to the same point as the plan itself."""
-    row = await supabase_get_film_summary(film_summary_id, user_id)
-    if not row:
-        raise HTTPException(status_code=404, detail=_FILM_SUMMARY_NOT_FOUND)
-    if row.get("status") != film_summary.FilmSummaryStatus.AWAITING_REVIEW:
-        raise HTTPException(status_code=409, detail="Audio/subtitle settings can only be edited while awaiting review")
-
-    updates = payload.model_dump(exclude_unset=True)
-
-    if not updates:
-        return _normalize_film_summary_row(row, include_content=True)
-
-    updated = await supabase_update_film_summary(film_summary_id, user_id, updates)
-    return _normalize_film_summary_row(updated, include_content=True)
-
-
-@app.post("/api/film-summaries/{film_summary_id}/translate-narration", responses={400: {"description": "Bad Request"}, 401: {"description": "Unauthorized"}, 403: {"description": "Forbidden"}, 404: {"description": "Not Found"}, 409: {"description": "Conflict"}, 502: {"description": "Bad Gateway"}})
-async def translate_film_summary_narration_endpoint(
-    film_summary_id: str, payload: FilmSummaryTranslateNarrationRequest, user_id: Annotated[str, Depends(get_user_id_header)],
-):
-    """Lets the user fix a wrong narration-language choice on an already-
-    generated plan after the fact (see film_summary.translate_edit_plan_
-    narration's docstring): footage, timing and segment structure are
-    untouched, only each voice_over segment's narration text is
-    retranslated. Persists the translated plan plus the row's own
-    narration_language (so any later TTS/regeneration reflects the
-    correction too), same 404/409/502 conventions as the sibling
-    generate_film_summary_narration_endpoint."""
-    row = await supabase_get_film_summary(film_summary_id, user_id)
-    if not row:
-        raise HTTPException(status_code=404, detail=_FILM_SUMMARY_NOT_FOUND)
-    if row.get("status") != film_summary.FilmSummaryStatus.AWAITING_REVIEW:
-        raise HTTPException(status_code=409, detail="Narration language can only be edited while awaiting review")
-
-    resolved_language, _ = _resolve_film_summary_narration_settings(payload.narration_language, row.get("narration_style"))
-    if not resolved_language:
-        raise HTTPException(status_code=400, detail="narration_language is required")
-
-    movie_metadata = {
-        "title": row.get("title") or "",
-        "source_duration_ms": int((row.get("source_duration_seconds") or 0) * 1000),
-        "narration_style": row.get("narration_style") or "",
-    }
-    try:
-        result = await film_summary.translate_edit_plan_narration(
-            plan=row.get("edit_plan") or {}, target_language=resolved_language, movie_metadata=movie_metadata,
-            duration_tolerance_ratio=FILM_SUMMARY_DURATION_TOLERANCE_RATIO,
-        )
-    except Exception as exc:
-        # Same 502 convention as generate_film_summary_narration_endpoint's
-        # own try/except: any failure here (OpenAI transport/config error,
-        # malformed JSON after exhausting the retry, or the model breaking
-        # the translation invariant) is a planning failure, never the
-        # user's fault.
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-    plan, validation_report = result["plan"], result["validation_report"]
-    updated = await supabase_update_film_summary(film_summary_id, user_id, {
-        "edit_plan": plan, "validation_report": validation_report, "narration_language": resolved_language,
-    })
-    return _normalize_film_summary_row(updated, include_content=True)
-
-
-@app.post("/api/film-summaries/{film_summary_id}/validate", responses={401: {"description": "Unauthorized"}, 403: {"description": "Forbidden"}, 404: {"description": "Not Found"}})
-async def validate_film_summary_plan_endpoint(film_summary_id: str, user_id: Annotated[str, Depends(get_user_id_header)]):
-    row = await supabase_get_film_summary(film_summary_id, user_id)
-    if not row:
-        raise HTTPException(status_code=404, detail=_FILM_SUMMARY_NOT_FOUND)
-
-    plan = row.get("edit_plan") or {}
-    valid_scene_ids = [s.get("scene_id") for s in (row.get("scene_index") or [])]
-    # Realigns the target to the actual total when it's still outside
-    # tolerance (e.g. a plan generated before this existed) instead of
-    # leaving "Revalider" report the same unfixable duration mismatch.
-    plan, validation_report = film_summary.realign_plan_target_duration(
-        plan, source_duration_ms=int((row.get("source_duration_seconds") or 0) * 1000),
-        valid_scene_ids=valid_scene_ids, duration_tolerance_ratio=FILM_SUMMARY_DURATION_TOLERANCE_RATIO,
-    )
-    await supabase_update_film_summary(film_summary_id, user_id, {
-        "edit_plan": plan, "validation_report": validation_report,
-        "target_duration_seconds": _plan_target_duration_seconds(plan),
-    })
-    return validation_report
-
-
-@app.post("/api/film-summaries/{film_summary_id}/render", responses={400: {"description": "Bad Request"}, 401: {"description": "Unauthorized"}, 402: {"description": "Payment Required"}, 403: {"description": "Forbidden"}, 404: {"description": "Not Found"}, 409: {"description": "Conflict"}})
-async def render_film_summary_endpoint(
-    film_summary_id: str, payload: FilmSummaryRenderRequest, user_id: Annotated[str, Depends(get_user_id_header)],
-):
-    if not FILM_SUMMARY_ENABLED:
-        raise HTTPException(status_code=404, detail=_FILM_SUMMARY_DISABLED)
-
-    row = await supabase_get_film_summary(film_summary_id, user_id)
-    if not row:
-        raise HTTPException(status_code=404, detail=_FILM_SUMMARY_NOT_FOUND)
-    if row.get("status") != film_summary.FilmSummaryStatus.AWAITING_REVIEW:
-        raise HTTPException(status_code=409, detail="Film summary is not awaiting review")
-
-    plan = row.get("edit_plan") or {}
-    valid_scene_ids = [s.get("scene_id") for s in (row.get("scene_index") or [])]
-    plan, validation_report = film_summary.realign_plan_target_duration(
-        plan, source_duration_ms=int((row.get("source_duration_seconds") or 0) * 1000),
-        valid_scene_ids=valid_scene_ids, duration_tolerance_ratio=FILM_SUMMARY_DURATION_TOLERANCE_RATIO,
-    )
-    if not validation_report["valid"]:
-        raise HTTPException(status_code=400, detail={"validation_report": validation_report})
-    if plan is not row.get("edit_plan"):
-        await supabase_update_film_summary(film_summary_id, user_id, {
-            "edit_plan": plan, "validation_report": validation_report,
-            "target_duration_seconds": _plan_target_duration_seconds(plan),
-        })
-
-    await _enforce_job_concurrency_limit(user_id)
-
-    voice_id = film_summary.resolve_tts_voice(payload.voice_id or row.get("voice_id"), FILM_SUMMARY_TTS_DEFAULT_VOICE)
-    character_count = _total_narration_character_count(plan)
-    # Use the (possibly just-realigned) target so credits reflect the video's
-    # actual planned length rather than a stale pre-alignment number.
-    render_required_credits = _estimate_film_summary_render_required_credits(
-        _plan_target_duration_seconds(plan), character_count,
-    )
-    await _reserve_job_credits(user_id, render_required_credits)
-
-    render_job_id = str(uuid.uuid4())
-    output_dir = os.path.join(OUTPUT_DIR, render_job_id)
-    os.makedirs(output_dir, exist_ok=True)
-
-    job_priority = await _resolve_user_job_priority(user_id)
-    await reel_job_manager.create_job(
-        user_id=user_id,
-        job_type=JobType.GENERATE_FILM_SUMMARY,
-        pipeline_name="FilmSummaryRenderPipeline",
-        job_id=render_job_id,
-        job_data={"phase": "render", "film_summary_id": film_summary_id, "render_required_credits": render_required_credits},
-        max_attempts=FILM_SUMMARY_JOB_MAX_ATTEMPTS,
-        reserved_quota=render_required_credits,
-        priority=job_priority,
-        queue_name="film_summaries",
-    )
-    await reel_job_manager.enqueue_job(render_job_id)
-
-    await supabase_update_film_summary(film_summary_id, user_id, {
-        "status": film_summary.FilmSummaryStatus.RENDERING,
-        "stage": film_summary.FilmSummaryStage.GENERATING_VOICE,
-        "job_id": render_job_id,
-        "voice_id": voice_id,
-    })
-
-    _spawn_background_task(_run_film_summary_render_job(
-        job_id=render_job_id,
-        user_id=user_id,
-        film_summary_id=film_summary_id,
-        project_id=row.get("project_id"),
-        source_s3_key=row.get("source_s3_key"),
-        output_dir=output_dir,
-        plan=plan,
-        voice_id=voice_id,
-        render_required_credits=render_required_credits,
-        narration_language=row.get("narration_language") or "",
-        subtitles_enabled=bool(row.get("subtitles_enabled")),
-        subtitle_style=row.get("subtitle_style"),
-    ))
-
-    return {"job_id": render_job_id, "film_summary_id": film_summary_id, "status": "rendering"}
-
-
-async def _run_film_summary_render_job(
-    job_id: str, user_id: str, film_summary_id: str, project_id: Optional[str], source_s3_key: Optional[str],
-    output_dir: str, plan: Dict[str, Any], voice_id: str, render_required_credits: float, narration_language: str,
-    subtitles_enabled: bool = False, subtitle_style: Optional[Dict[str, Any]] = None,
+async def _handle_film_summary_render_validation_failure(
+    exc: "film_summary.FilmSummaryValidationError", job_id: str, user_id: str,
+    film_summary_id: Optional[str], project_id: Optional[str], render_required_credits: float,
 ) -> None:
-    try:
-        await reel_job_manager.start_job(job_id)
-        await _run_film_summary_render_pipeline_stages(
-            job_id, user_id, film_summary_id, project_id, source_s3_key, output_dir, plan, voice_id, narration_language,
-            subtitles_enabled=subtitles_enabled, subtitle_style=subtitle_style,
-        )
-    except film_summary.FilmSummaryValidationError as exc:
-        await reel_job_manager.fail_job(job_id, str(exc), error_code=exc.code)
-        await _mark_film_summary_job_terminal(
-            user_id, film_summary_id, project_id, film_summary.FilmSummaryStatus.FAILED,
-            film_summary.FilmSummaryStage.FAILED, exc.code, str(exc),
-        )
-        await reel_job_manager.refund_reservation(job_id, user_id, render_required_credits, operation_type=film_summary.CREDIT_OPERATION_TYPE)
-        await _create_notification(
-            user_id, "film_summary_failed", FILM_SUMMARY_FAILED_NOTIFICATION_TITLE, str(exc) or "Le rendu de votre resume de film a echoue.",
-            data={"job_id": job_id, "project_id": project_id, "film_summary_id": film_summary_id},
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.exception(f"Film summary render job {job_id} failed")
-        await reel_job_manager.fail_job(job_id, "Technical failure while rendering the film summary", error_code=film_summary.FilmSummaryErrorCode.RENDER_FAILED)
-        await _mark_film_summary_job_terminal(
-            user_id, film_summary_id, project_id, film_summary.FilmSummaryStatus.FAILED,
-            film_summary.FilmSummaryStage.FAILED, film_summary.FilmSummaryErrorCode.RENDER_FAILED, str(exc),
-        )
-        await reel_job_manager.refund_reservation(job_id, user_id, render_required_credits, operation_type=film_summary.CREDIT_OPERATION_TYPE)
-        await _create_notification(
-            user_id, "film_summary_failed", FILM_SUMMARY_FAILED_NOTIFICATION_TITLE,
-            "Le rendu de votre resume de film a echoue. Reessayez ou contactez le support si le probleme persiste.",
-            data={"job_id": job_id, "project_id": project_id, "film_summary_id": film_summary_id},
-        )
-    finally:
-        if os.path.exists(output_dir):
-            shutil.rmtree(output_dir, ignore_errors=True)
+    """Shared terminal-state handling for a FilmSummaryValidationError
+    raised while chaining straight into the render phase (see
+    _finalize_film_summary_analysis) -- same shape as
+    _handle_film_summary_validation_failure, but refunds the RENDER
+    reservation only: analysis credits were already correctly debited by
+    the time this runs, and must never be refunded a second time."""
+    await reel_job_manager.fail_job(job_id, str(exc), error_code=exc.code)
+    await _mark_film_summary_job_terminal(
+        user_id, film_summary_id, project_id, film_summary.FilmSummaryStatus.FAILED,
+        film_summary.FilmSummaryStage.FAILED, exc.code, str(exc),
+    )
+    await reel_job_manager.refund_reservation(job_id, user_id, render_required_credits, operation_type=film_summary.CREDIT_OPERATION_TYPE)
+    await _create_notification(
+        user_id, "film_summary_failed", FILM_SUMMARY_FAILED_NOTIFICATION_TITLE, str(exc) or "Le rendu de votre resume de film a echoue.",
+        data={"job_id": job_id, "project_id": project_id, "film_summary_id": film_summary_id},
+    )
+
+
+async def _handle_film_summary_render_unexpected_failure(
+    exc: Exception, job_id: str, user_id: str, film_summary_id: Optional[str], project_id: Optional[str],
+    render_required_credits: float,
+) -> None:
+    logger.exception(f"Film summary render stage failed for job {job_id}")
+    await reel_job_manager.fail_job(job_id, "Technical failure while rendering the film summary", error_code=film_summary.FilmSummaryErrorCode.RENDER_FAILED)
+    await _mark_film_summary_job_terminal(
+        user_id, film_summary_id, project_id, film_summary.FilmSummaryStatus.FAILED,
+        film_summary.FilmSummaryStage.FAILED, film_summary.FilmSummaryErrorCode.RENDER_FAILED, str(exc),
+    )
+    await reel_job_manager.refund_reservation(job_id, user_id, render_required_credits, operation_type=film_summary.CREDIT_OPERATION_TYPE)
+    await _create_notification(
+        user_id, "film_summary_failed", FILM_SUMMARY_FAILED_NOTIFICATION_TITLE,
+        "Le rendu de votre resume de film a echoue. Reessayez ou contactez le support si le probleme persiste.",
+        data={"job_id": job_id, "project_id": project_id, "film_summary_id": film_summary_id},
+    )
 
 
 # Maps a film_summaries row's camelCase subtitle_style snapshot (the shape
@@ -15359,6 +15188,7 @@ async def _run_film_summary_render_pipeline_stages(
     job_id: str, user_id: str, film_summary_id: str, project_id: Optional[str], source_s3_key: Optional[str],
     output_dir: str, plan: Dict[str, Any], voice_id: str, narration_language: str,
     subtitles_enabled: bool = False, subtitle_style: Optional[Dict[str, Any]] = None,
+    render_required_credits: float = 0.0, analysis_actual_credits: float = 0.0,
 ) -> None:
     bucket_name = os.environ.get("AWS_S3_BUCKET", "my-clips-bucket")
     source_path = os.path.join(output_dir, "source.mp4")
@@ -15463,6 +15293,7 @@ async def _run_film_summary_render_pipeline_stages(
         job_id, user_id, film_summary_id, project_id, plan_with_actual_durations,
         preview_s3_key, final_s3_key, render_result, output_storage_bytes,
         source_s3_key=source_s3_key, bucket_name=bucket_name,
+        reserved_credits=render_required_credits, analysis_actual_credits=analysis_actual_credits,
     )
 
 
@@ -15542,6 +15373,7 @@ async def _finalize_film_summary_render(
     job_id: str, user_id: str, film_summary_id: str, project_id: Optional[str], plan: Dict[str, Any],
     preview_s3_key: str, final_s3_key: str, render_result: Dict[str, Any], output_storage_bytes: float = 0.0,
     source_s3_key: Optional[str] = None, bucket_name: str = "",
+    reserved_credits: float = 0.0, analysis_actual_credits: float = 0.0,
 ) -> None:
     character_count = _total_narration_character_count(plan)
     final_duration_seconds = float(render_result.get("final_duration_seconds") or 0.0)
@@ -15551,9 +15383,6 @@ async def _finalize_film_summary_render(
     final_credits = float(cost_breakdown.get("final_credits") or 0.0)
     now_iso = datetime.now(timezone.utc).isoformat()
 
-    job_row = await supabase_get_job_record(job_id, user_id=user_id)
-    reserved_credits = float((job_row or {}).get("reserved_quota") or 0.0)
-
     if is_supabase_configured():
         await supabase_update_film_summary(film_summary_id, user_id, {
             "status": film_summary.FilmSummaryStatus.COMPLETED,
@@ -15562,12 +15391,11 @@ async def _finalize_film_summary_render(
             "preview_s3_key": preview_s3_key,
             "final_s3_key": final_s3_key,
             "completed_at": now_iso,
-            # The source is only ever read again by /render (requires
-            # awaiting_review) or /retry (requires failed) -- neither is
-            # reachable once the summary is completed, so it can't be
-            # needed again. It must never count against the user's
-            # persistent storage: only the preview/final they actually
-            # keep does (billed below).
+            # The source is only ever read again by /retry (requires
+            # failed) -- unreachable once the summary is completed, so it
+            # can't be needed again. It must never count against the
+            # user's persistent storage: only the preview/final they
+            # actually keep does (billed below).
             "source_s3_key": None,
         })
         await _cleanup_film_summary_source_media(job_id, source_s3_key, bucket_name, project_id)
@@ -15582,7 +15410,9 @@ async def _finalize_film_summary_render(
     await reel_job_manager.complete_job(
         job_id,
         {"film_summary_id": film_summary_id, "project_id": project_id, "preview_s3_key": preview_s3_key, "final_s3_key": final_s3_key},
-        actual_credit=final_credits,
+        # The job's single actual_credit must reflect the whole single-step
+        # operation (analysis + render), not just this render settlement.
+        actual_credit=final_credits + analysis_actual_credits,
         cost_breakdown=cost_breakdown,
         consumed_quota=1.0,
     )
@@ -15626,25 +15456,19 @@ async def cancel_film_summary_endpoint(film_summary_id: str, user_id: Annotated[
     return {"cancelled": True}
 
 
-def _retry_film_summary_status_updates(previous_status: str, retry_job_id: str) -> Dict[str, Any]:
+def _retry_film_summary_status_updates(retry_job_id: str) -> Dict[str, Any]:
     """Status/stage reset applied by retry_film_summary_endpoint on every
-    retry (automatic or failed/failed resubmission), plus -- only when
-    retriggered from awaiting_review -- clearing any stale manual-editor
-    state, since a full automatic regenerate makes it meaningless against
-    the brand-new plan about to replace it. subtitles_enabled/
-    subtitle_style are independent user preferences and are left
-    untouched here."""
-    updates: Dict[str, Any] = {
+    retry of a failed film summary. subtitles_enabled/subtitle_style/
+    voice_id are independent user preferences and are left untouched
+    here -- they're re-read from the row and threaded back through the
+    retry job (see retry_film_summary_endpoint)."""
+    return {
         "status": film_summary.FilmSummaryStatus.QUEUED,
         "stage": film_summary.FilmSummaryStage.UPLOADING,
         "job_id": retry_job_id,
         "error_code": None,
         "error_message": None,
     }
-    if previous_status == film_summary.FilmSummaryStatus.AWAITING_REVIEW:
-        updates["manual_selection"] = None
-        updates["edit_mode"] = "automatic"
-    return updates
 
 
 @app.post("/api/film-summaries/{film_summary_id}/retry", responses={401: {"description": "Unauthorized"}, 402: {"description": "Payment Required"}, 403: {"description": "Forbidden"}, 404: {"description": "Not Found"}, 409: {"description": "Conflict"}})
@@ -15655,8 +15479,8 @@ async def retry_film_summary_endpoint(film_summary_id: str, user_id: Annotated[s
     row = await supabase_get_film_summary(film_summary_id, user_id)
     if not row:
         raise HTTPException(status_code=404, detail=_FILM_SUMMARY_NOT_FOUND)
-    if row.get("status") not in (film_summary.FilmSummaryStatus.FAILED, film_summary.FilmSummaryStatus.AWAITING_REVIEW):
-        raise HTTPException(status_code=409, detail="Only a failed or awaiting-review film summary can be retried")
+    if row.get("status") != film_summary.FilmSummaryStatus.FAILED:
+        raise HTTPException(status_code=409, detail="Only a failed film summary can be retried")
 
     await _enforce_job_concurrency_limit(user_id)
 
@@ -15683,9 +15507,18 @@ async def retry_film_summary_endpoint(film_summary_id: str, user_id: Annotated[s
     await reel_job_manager.enqueue_job(retry_job_id)
 
     await supabase_update_film_summary(
-        film_summary_id, user_id, _retry_film_summary_status_updates(row.get("status"), retry_job_id),
+        film_summary_id, user_id, _retry_film_summary_status_updates(retry_job_id),
     )
 
+    settings = FilmSummaryGenerationSettings(
+        target_duration_seconds=row.get("target_duration_seconds") or 0,
+        source_language=row.get("source_language") or "",
+        narration_language=row.get("narration_language") or "",
+        narration_style=row.get("narration_style") or "cinematic",
+        voice_id=row.get("voice_id") or "",
+        subtitles_enabled=bool(row.get("subtitles_enabled")),
+        subtitle_style=row.get("subtitle_style"),
+    )
     _spawn_background_task(_run_film_summary_retry_job(
         job_id=retry_job_id,
         user_id=user_id,
@@ -15695,10 +15528,7 @@ async def retry_film_summary_endpoint(film_summary_id: str, user_id: Annotated[s
         output_dir=output_dir,
         local_duration=local_duration,
         analysis_required_credits=analysis_required_credits,
-        target_duration_seconds=row.get("target_duration_seconds") or 0,
-        source_language=row.get("source_language") or "",
-        narration_language=row.get("narration_language") or "",
-        narration_style=row.get("narration_style") or "cinematic",
+        settings=settings,
         cached={
             "transcript_segments": row.get("transcript_segments") or [],
             "scene_index": row.get("scene_index") or [],
@@ -15797,8 +15627,8 @@ async def _resume_film_summary_analysis_from_cache(
 
 async def _run_film_summary_retry_job(
     job_id: str, user_id: str, film_summary_id: str, project_id: Optional[str], source_s3_key: Optional[str],
-    output_dir: str, local_duration: float, analysis_required_credits: float, target_duration_seconds: float,
-    source_language: str, narration_language: str, narration_style: str, cached: Dict[str, Any],
+    output_dir: str, local_duration: float, analysis_required_credits: float,
+    settings: FilmSummaryGenerationSettings, cached: Dict[str, Any],
 ) -> None:
     try:
         await reel_job_manager.start_job(job_id)
@@ -15808,13 +15638,14 @@ async def _run_film_summary_retry_job(
             raise film_summary.FilmSummaryValidationError(film_summary.FilmSummaryErrorCode.RENDER_FAILED, "Source video is not available for retry")
 
         plan, validation_report, usage = await _resume_film_summary_analysis_from_cache(
-            job_id, user_id, film_summary_id, input_path, local_duration, target_duration_seconds,
-            source_language, narration_language, narration_style, cached,
+            job_id, user_id, film_summary_id, input_path, local_duration, settings.target_duration_seconds,
+            settings.source_language, settings.narration_language, settings.narration_style, cached,
         )
 
         await _finalize_film_summary_analysis(
             job_id, user_id, film_summary_id, project_id, local_duration, 0.0,
             analysis_required_credits, plan, validation_report, usage,
+            output_dir, source_s3_key, settings,
         )
     except film_summary.FilmSummaryValidationError as exc:
         await _handle_film_summary_validation_failure(exc, job_id, user_id, film_summary_id, project_id, analysis_required_credits)
@@ -16517,7 +16348,29 @@ SUPABASE_SOCIAL_INSIGHTS_CUMULATIVE_SNAPSHOTS_TABLE = os.environ.get(
 )
 SOCIAL_INSIGHTS_SYNC_INTERVAL_SECONDS = int(os.environ.get("SOCIAL_INSIGHTS_SYNC_INTERVAL_SECONDS", str(15 * 60)))
 SOCIAL_INSIGHTS_MANUAL_REFRESH_COOLDOWN_SECONDS = int(os.environ.get("SOCIAL_INSIGHTS_MANUAL_REFRESH_COOLDOWN_SECONDS", str(5 * 60)))
-_INSIGHTS_SUPPORTED_PLATFORMS = ("facebook", "instagram", "youtube", "tiktok", "linkedin_analytics")
+
+
+def _insights_supported_platforms() -> Tuple[str, ...]:
+    """Feeds the periodic sync sweep (_list_social_accounts_for_insights_sync)
+    and both insights endpoints (get_social_insights/refresh_social_insights),
+    so disabling a toggle stops that platform's insights everywhere with no
+    other call site to touch. A function (re-evaluated on each call) rather
+    than a module-level constant so tests can monkeypatch a toggle and
+    observe the effect without reimporting the module.
+
+    INSTAGRAM_ENABLED/LINKEDIN_INSIGHTS_ENABLED are stronger than this list
+    alone: _resolve_platform_config also refuses to let a disabled one even
+    connect/reconnect. TIKTOK_INSIGHTS_ENABLED is intentionally narrower --
+    TikTok must always stay connectable and able to publish/upload; this
+    toggle only ever removes "tiktok" from the tuple below, never reaches
+    _resolve_platform_config, so connecting and publishing are unaffected
+    by it."""
+    return tuple(
+        platform for platform in ("facebook", "instagram", "youtube", "tiktok", "linkedin_analytics")
+        if (platform != "instagram" or INSTAGRAM_ENABLED)
+        and (platform != "tiktok" or TIKTOK_INSIGHTS_ENABLED)
+        and (platform != "linkedin_analytics" or LINKEDIN_INSIGHTS_ENABLED)
+    )
 _SOCIAL_INSIGHTS_SNAPSHOT_METRIC_KEYS = ("followers",)
 # How many trailing days (including the day of the sync itself) each
 # periodic/manual sync re-fetches and stores, so the dashboard's weekly
@@ -16584,6 +16437,13 @@ def _decrypt_token(token_encrypted: Optional[str]) -> str:
 def _resolve_platform_config(platform: str) -> Dict[str, Any]:
     key = (platform or "").strip().lower()
     if key not in PLATFORM_CONFIG:
+        raise HTTPException(status_code=404, detail=_UNSUPPORTED_PLATFORM)
+    # Disabled via a feature toggle (INSTAGRAM_ENABLED/LINKEDIN_INSIGHTS_ENABLED)
+    # is treated exactly like an unsupported platform -- connect/callback
+    # must not advertise or attempt an OAuth flow for it while it's off.
+    if key == "instagram" and not INSTAGRAM_ENABLED:
+        raise HTTPException(status_code=404, detail=_UNSUPPORTED_PLATFORM)
+    if key == "linkedin_analytics" and not LINKEDIN_INSIGHTS_ENABLED:
         raise HTTPException(status_code=404, detail=_UNSUPPORTED_PLATFORM)
     config = PLATFORM_CONFIG[key]
     if not config.get("client_id") or not config.get("client_secret"):
@@ -16900,13 +16760,13 @@ async def _upsert_social_account(
 
 async def _list_social_accounts_for_insights_sync() -> List[Dict[str, Any]]:
     """Every connected account on a platform this app can fetch insights
-    for (see _INSIGHTS_SUPPORTED_PLATFORMS), across ALL users -- the
+    for (see _insights_supported_platforms), across ALL users -- the
     periodic sync job's (sync_social_insights_jobs) input list."""
     client = await supabase_get_client()
     response = (
         await client.table(SUPABASE_SOCIAL_ACCOUNTS_TABLE)
         .select("*")
-        .in_("platform", list(_INSIGHTS_SUPPORTED_PLATFORMS))
+        .in_("platform", list(_insights_supported_platforms()))
         .execute()
     )
     return response.data or []
@@ -20184,7 +20044,7 @@ async def get_social_insights(
         raise HTTPException(status_code=404, detail=_SOCIAL_ACCOUNT_NOT_FOUND)
 
     platform = str(account.get("platform") or "")
-    if platform not in _INSIGHTS_SUPPORTED_PLATFORMS:
+    if platform not in _insights_supported_platforms():
         result = {
             "supported": False,
             "reason": f"{platform.capitalize()} analytics require special platform partner access not yet available.",
@@ -20225,7 +20085,7 @@ async def refresh_social_insights(
         raise HTTPException(status_code=404, detail=_SOCIAL_ACCOUNT_NOT_FOUND)
 
     platform = str(account.get("platform") or "")
-    if platform not in _INSIGHTS_SUPPORTED_PLATFORMS:
+    if platform not in _insights_supported_platforms():
         raise HTTPException(status_code=400, detail=f"{platform.capitalize()} analytics are not supported.")
 
     last_synced_at = account.get("last_insights_synced_at")

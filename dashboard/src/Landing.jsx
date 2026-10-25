@@ -1,7 +1,8 @@
 import React from 'react';
-import { Zap, Globe, FileVideo, Subtitles, Youtube, Instagram, Check, ChevronDown, Languages, Type, Scissors, Facebook, Linkedin } from 'lucide-react';
+import { Globe, FileVideo, Subtitles, Youtube, Instagram, ChevronDown, Languages, Film, EyeOff, Scissors, Facebook, Linkedin } from 'lucide-react';
 import { useTranslation } from "./state/LanguageContext";
 import { useNavigate} from "react-router-dom";
+import LandingPricingSection from "./components/LandingPricingSection";
 
 const TikTokIcon = ({ size = 16, className = "" }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" className={className}>
@@ -29,15 +30,6 @@ const StepCard = ({ number, title, description }) => (
       <p className="text-slate-500 dark:text-zinc-400 text-sm leading-relaxed">{description}</p>
     </div>
   </div>
-);
-
-const ComparisonRow = ({ feature, Vireel, opusclip, kapwing }) => (
-  <tr className="border-b border-slate-200 dark:border-white/5">
-    <td className="py-3 px-4 text-sm text-slate-700 dark:text-zinc-300">{feature}</td>
-    <td className="py-3 px-4 text-center">{Vireel}</td>
-    <td className="py-3 px-4 text-center">{opusclip}</td>
-    <td className="py-3 px-4 text-center">{kapwing}</td>
-  </tr>
 );
 
 const FAQItem = ({ question, answer, isOpen, onClick }) => (
@@ -79,12 +71,12 @@ export default function Landing({ onLaunchApp }) {
       description: t("landing.feature3Desc")
     },
     {
-      icon: Type,
+      icon: Film,
       title: t("landing.feature4"),
       description: t("landing.feature4Desc")
     },
     {
-      icon: Zap,
+      icon: EyeOff,
       title: t("landing.feature5"),
       description: t("landing.feature5Desc")
     },
@@ -93,16 +85,6 @@ export default function Landing({ onLaunchApp }) {
       title: t("landing.feature6"),
       description: t("landing.feature6Desc")
     },
-/*    {
-      icon: Sparkles,
-      title: "Générateur de vidéos UGC IA",
-      description: "Générez des vidéos marketing avec des acteurs IA pour tout produit ou entreprise. Collez une URL ou décrivez votre produit — l'IA écrit le script, génère un avatar réaliste avec synchronisation labiale, ajoute des b-roll, des sous-titres et des superpositions accrocheuses. À partir de 0,65 $/vidéo."
-    },
-    {
-      icon: FileVideo,
-      title: "Acteurs IA et Synchronisation Labiale",
-      description: "Choisissez parmi une galerie d'acteurs générés par l'IA ou téléversez votre propre photo. Le pipeline génère une vidéo de tête parlante avec des mouvements naturels et une voix off synchronisée en anglais ou en espagnol. Deux modes : Économique (0,65 $) et Premium (2,00 $)."
-    } */
   ];
 
   const steps = [
@@ -184,9 +166,6 @@ export default function Landing({ onLaunchApp }) {
     }
   ];
 
-  const checkIcon = <Check size={16} className="text-green-400 mx-auto" />;
-  const xIcon = <span className="text-slate-400 dark:text-zinc-500 text-sm">Paid</span>;
-
   return (
     <div className="min-h-screen bg-background text-slate-900 dark:text-white">
       {/* Navigation */}
@@ -254,9 +233,13 @@ export default function Landing({ onLaunchApp }) {
       </section>
 
       {/* Features Section */}
-      <section id="features" className="py-2 px-6">
+      <section id="features" className="py-20 px-6">
         <div className="max-w-6xl mx-auto">
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-2">
+          <div className="text-center mb-14">
+            <h2 className="text-3xl md:text-4xl font-bold mb-4">{t("landing.featuresTitle")}</h2>
+            <p className="text-slate-500 dark:text-zinc-400 max-w-2xl mx-auto">{t("landing.featuresDesc")}</p>
+          </div>
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-5">
             {features.map((feature, i) => (
               <FeatureCard key={i} {...feature} />
             ))}
@@ -280,42 +263,9 @@ export default function Landing({ onLaunchApp }) {
         </div>
       </section>
 
-      {/* Comparison Table */}
-      <section id="comparison" className="py-20 px-6 bg-surface/20">
-        <div className="max-w-4xl mx-auto">
-          <div className="text-center mb-14">
-            <h2 className="text-3xl md:text-4xl font-bold mb-4">{t("landing.priceTitle")}</h2>
-            <p className="text-slate-500 dark:text-zinc-400 max-w-2xl mx-auto">{t("landing.priceDesc")}</p>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-slate-300 dark:border-white/10">
-                  <th className="py-3 px-4 text-left text-sm text-slate-500 dark:text-zinc-400 font-medium">{t("landing.feature")}</th>
-                  <th className="py-3 px-4 text-center text-sm font-medium">
-                    <span className="text-primary">{t("landing.silver")}</span>
-                  </th>
-                  <th className="py-3 px-4 text-center text-sm text-slate-500 dark:text-zinc-400 font-medium">{t("landing.gold")}</th>
-                  <th className="py-3 px-4 text-center text-sm text-slate-500 dark:text-zinc-400 font-medium">{t("landing.ultimate")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <ComparisonRow feature={t("landing.prix")} Vireel={<span className="text-green-400 font-semibold">9.99€ / mois</span>} opusclip={<span className="font-semibold">24.99€ / mois</span>} kapwing={<span className="font-semibold">49.99€ / mois</span>} />
-                <ComparisonRow feature={t("landing.viral")} Vireel={checkIcon} opusclip={checkIcon} kapwing={checkIcon} />
-                <ComparisonRow feature={t("landing.shorts")} Vireel={checkIcon} opusclip={checkIcon} kapwing={checkIcon} />
-                <ComparisonRow feature={t("landing.subtitles")} Vireel={checkIcon} opusclip={checkIcon} kapwing={checkIcon} />
-                <ComparisonRow feature={t("landing.translation")} Vireel={checkIcon} opusclip={checkIcon} kapwing={checkIcon} />
-                <ComparisonRow feature={t("landing.iaEffects")} Vireel={checkIcon} opusclip={checkIcon} kapwing={checkIcon} />
-                <ComparisonRow feature={t("landing.hooks")} Vireel={checkIcon} opusclip={checkIcon} kapwing={checkIcon} />
-                <ComparisonRow feature={t("landing.social")} Vireel={checkIcon} opusclip={checkIcon} kapwing={checkIcon} />
-                <ComparisonRow feature={t("landing.watermark")} Vireel={checkIcon} opusclip={checkIcon} kapwing={checkIcon} />
-                <ComparisonRow feature={t("landing.youtubeLink")} Vireel={checkIcon} opusclip={checkIcon} kapwing={checkIcon} />
-
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </section>
+      {/* Pricing Section -- dynamic, sourced from GET /api/abonnements
+          (ordered by "ordre"), informational only (no checkout). */}
+      <LandingPricingSection t={t} />
 
       {/* Use Cases */}
       <section className="py-10 px-6">

@@ -9,7 +9,7 @@ import { useTranslation } from "../state/LanguageContext";
 import Breadcrumbs from "../components/Breadcrumbs";
 import MediaInput from "../components/MediaInput";
 import FilmSummaryProcessingPanel from "../components/FilmSummaryProcessingPanel";
-import { errorMessageForCode, normalizeFilmSummaryJobStatus as normalizeStatus, NARRATION_LANGUAGE_OPTIONS } from "../lib/filmSummary";
+import { errorMessageForCode, normalizeFilmSummaryJobStatus as normalizeStatus } from "../lib/filmSummary";
 
 const NARRATION_STYLE_KEYS = [
     {
@@ -34,6 +34,14 @@ const NARRATION_STYLE_KEYS = [
     },
 ];
 
+// Single-step creation: the user picks only the source video, the narration
+// theme, the narrator voice and whether to burn in subtitles -- title and
+// target duration are no longer asked for (see app.py's create_film_summary:
+// the title is derived from the source filename/YouTube title, same
+// convention reels/captions already use, and the duration is always
+// auto-computed, capped around 8 minutes). Analysis and rendering now chain
+// automatically server-side under a single job_id, with no manual review
+// step in between.
 export default function FilmSummaryCreatePage() {
     const { user } = useAuth();
     const { hasCredits } = useUserCredits();
@@ -50,21 +58,15 @@ export default function FilmSummaryCreatePage() {
     const [projectJobLoading, setProjectJobLoading] = useState(false);
     const pollFailureCountRef = useRef(0);
 
-    // Populated from GET /api/config -- drives the target-duration bounds
-    // and the voice picker (see FILM_SUMMARY_* env-backed settings in
-    // app.py). Sensible defaults are kept until the config resolves so the
-    // form is usable immediately.
-    const [minTargetMinutes, setMinTargetMinutes] = useState(3);
-    const [maxTargetMinutes, setMaxTargetMinutes] = useState(20);
+    // Populated from GET /api/config -- drives the voice picker (see
+    // FILM_SUMMARY_* env-backed settings in app.py). Sensible defaults are
+    // kept until the config resolves so the form is usable immediately.
     const [allowedVoices, setAllowedVoices] = useState([]);
     const [defaultVoice, setDefaultVoice] = useState("cedar");
 
-    const [title, setTitle] = useState("");
-    const [targetDurationMinutes, setTargetDurationMinutes] = useState("");
-    const [sourceLanguage, setSourceLanguage] = useState("");
-    const [narrationLanguage, setNarrationLanguage] = useState("");
     const [narrationStyle, setNarrationStyle] = useState("cinematic");
     const [voiceId, setVoiceId] = useState("");
+    const [addSubtitles, setAddSubtitles] = useState(true);
 
     // Voice preview playback (GET /api/film-summaries/voice-previews/{voice})
     // -- a short demo line synthesized once server-side and cached, so the
@@ -122,8 +124,6 @@ export default function FilmSummaryCreatePage() {
         fetchAppConfig()
             .then((cfg) => {
                 if (!active || !cfg) return;
-                if (Number.isFinite(cfg.filmSummaryMinTargetDurationSeconds)) setMinTargetMinutes(Math.round(cfg.filmSummaryMinTargetDurationSeconds / 60));
-                if (Number.isFinite(cfg.filmSummaryMaxTargetDurationSeconds)) setMaxTargetMinutes(Math.round(cfg.filmSummaryMaxTargetDurationSeconds / 60));
                 if (Array.isArray(cfg.filmSummaryAllowedVoices)) setAllowedVoices(cfg.filmSummaryAllowedVoices);
                 if (cfg.filmSummaryDefaultVoice) {
                     setDefaultVoice(cfg.filmSummaryDefaultVoice);
@@ -170,9 +170,9 @@ export default function FilmSummaryCreatePage() {
                     setStatus("processing");
                     return;
                 }
-                // Any other status (awaiting_review, rendering, completed,
-                // failed, rejected, cancelled) is best presented by the
-                // detail page's own state machine.
+                // Any other status (rendering, rejected, failed, completed,
+                // cancelled, or a legacy awaiting_review row) is best
+                // presented by the detail page's own state machine.
                 navigate(`/dashboard/film-summaries/projects/${projectIdFromUrl}`);
             } catch {
                 if (!cancelled) {
@@ -198,7 +198,7 @@ export default function FilmSummaryCreatePage() {
             try {
                 const response = await fetch(getApiUrl(`/api/status/${jobId}`), { headers: getAuthHeaders(user?.id) });
                 if (!response.ok) {
-                    // A session that expires mid-analysis (this can run well
+                    // A session that expires mid-operation (this can run well
                     // past an hour) previously left this loop polling
                     // forever, hitting the same 401 on every retry with
                     // nothing ever shown to the user -- stop immediately and
@@ -228,10 +228,10 @@ export default function FilmSummaryCreatePage() {
                 }
 
                 if (data.status === "completed" || data.status === "failed") {
-                    // The film summary row (awaiting_review, rejected or
-                    // failed) and its project both exist by this point --
-                    // the detail page is the single source of truth for how
-                    // to present whichever terminal state was reached.
+                    // The film summary row (rejected, failed or completed)
+                    // and its project both exist by this point -- the detail
+                    // page is the single source of truth for how to present
+                    // whichever terminal state was reached.
                     const resultProjectId = data?.result?.project_id || projectIdFromUrl;
                     setTimeout(() => {
                         if (resultProjectId) {
@@ -271,30 +271,23 @@ export default function FilmSummaryCreatePage() {
         setCurrentStep("");
         try {
             const headers = getAuthHeaders(user.id);
-            const targetDurationSeconds = targetDurationMinutes ? Math.round(Number(targetDurationMinutes) * 60) : undefined;
             let body;
             if (data.type === "url") {
                 headers["Content-Type"] = "application/json";
                 body = JSON.stringify({
                     url: data.payload,
                     acknowledged: !!data.acknowledged,
-                    title,
-                    target_duration_seconds: targetDurationSeconds,
-                    source_language: sourceLanguage,
-                    narration_language: narrationLanguage,
                     narration_style: narrationStyle,
                     voice_id: voiceId,
+                    add_subtitles: addSubtitles,
                 });
             } else {
                 body = new FormData();
                 body.append("file", data.payload);
                 body.append("acknowledged", data.acknowledged ? "true" : "false");
-                if (title) body.append("title", title);
-                if (targetDurationSeconds) body.append("target_duration_seconds", String(targetDurationSeconds));
-                if (sourceLanguage) body.append("source_language", sourceLanguage);
-                if (narrationLanguage) body.append("narration_language", narrationLanguage);
                 if (narrationStyle) body.append("narration_style", narrationStyle);
                 if (voiceId) body.append("voice_id", voiceId);
+                body.append("add_subtitles", addSubtitles ? "true" : "false");
             }
 
             const response = await fetch(getApiUrl("/api/film-summaries"), {
@@ -329,6 +322,13 @@ export default function FilmSummaryCreatePage() {
         }
     };
 
+    // Analysis and rendering now chain under the same job_id (see app.py's
+    // _finalize_film_summary_analysis) -- the step list itself switches
+    // automatically from buildFilmSummaryProcessSteps' stage-based phase
+    // inference, so the panel title is switched the same simple way here
+    // rather than needing the row's own status (not available from job
+    // polling alone).
+    const isRenderStage = ["generating_voice", "rendering_preview", "rendering_final", "adding_subtitles"].includes(currentStep);
     const isProcessing = normalizeStatus(status) === "processing";
     const breadcrumbItems = [
         { label: t("breadcrumbs.dashboard", "Dashboard"), href: "/dashboard" },
@@ -359,74 +359,6 @@ export default function FilmSummaryCreatePage() {
                             {t("common.insufficientCreditsStart", "Credits insuffisants pour initier cette operation.")}
                         </div>
                     ) : null}
-
-                    <div className="grid gap-4 sm:grid-cols-2">
-                        <div className="space-y-2">
-                            <label className="block text-xs font-semibold uppercase tracking-[0.16em] text-slate-400 dark:text-zinc-500">
-                                {t("filmSummary.titleLabel", "Titre")}
-                            </label>
-                            <input
-                                type="text"
-                                value={title}
-                                onChange={(e) => setTitle(e.target.value)}
-                                placeholder={t("filmSummary.titlePlaceholder", "ex: Mon film (2024)")}
-                                className="input-field w-full dark:text-white"
-                            />
-                            <p className="text-xs text-slate-500 dark:text-zinc-400">{t("filmSummary.titleHint", "Optionnel -- utilise pour nommer le projet genere.")}</p>
-                        </div>
-
-                        <div className="space-y-2">
-                            <label className="block text-xs font-semibold uppercase tracking-[0.16em] text-slate-400 dark:text-zinc-500">
-                                {t("filmSummary.targetDurationLabel", "Duree cible du resume")}
-                            </label>
-                            <input
-                                type="number"
-                                min={minTargetMinutes}
-                                max={maxTargetMinutes}
-                                value={targetDurationMinutes}
-                                onChange={(e) => setTargetDurationMinutes(e.target.value)}
-                                placeholder={t("filmSummary.targetDurationAuto", "Automatique (environ 1/6e de la duree source)")}
-                                className="input-field w-full dark:text-white"
-                            />
-                            <p className="text-xs text-slate-500 dark:text-zinc-400">
-                                {t("filmSummary.targetDurationHint", "Optionnel, en minutes. Laisse vide pour laisser le systeme la calculer a partir de la duree source ({{min}}-{{max}} min autorisees).", { min: minTargetMinutes, max: maxTargetMinutes })}
-                            </p>
-                        </div>
-
-                        <div className="space-y-2">
-                            <label className="block text-xs font-semibold uppercase tracking-[0.16em] text-slate-400 dark:text-zinc-500">
-                                {t("filmSummary.sourceLanguageLabel", "Langue source")}
-                            </label>
-                            <select
-                                value={sourceLanguage}
-                                onChange={(e) => setSourceLanguage(e.target.value)}
-                                className="input-field w-full dark:text-white"
-                            >
-                                <option value="">{t("filmSummary.sourceLanguageAuto", "Detection automatique")}</option>
-                                {NARRATION_LANGUAGE_OPTIONS.map((option) => (
-                                    <option key={option.value} value={option.value}>{t(option.labelKey, option.fallback)}</option>
-                                ))}
-                            </select>
-                            <p className="text-xs text-slate-500 dark:text-zinc-400">{t("filmSummary.sourceLanguageHint", "Optionnel -- detectee automatiquement depuis l'audio si laisse vide.")}</p>
-                        </div>
-
-                        <div className="space-y-2">
-                            <label className="block text-xs font-semibold uppercase tracking-[0.16em] text-slate-400 dark:text-zinc-500">
-                                {t("filmSummary.narrationLanguageLabel", "Langue de la narration")}
-                            </label>
-                            <select
-                                value={narrationLanguage}
-                                onChange={(e) => setNarrationLanguage(e.target.value)}
-                                className="input-field w-full dark:text-white"
-                            >
-                                <option value="">{t("filmSummary.narrationLanguageAuto", "Meme langue que la source")}</option>
-                                {NARRATION_LANGUAGE_OPTIONS.map((option) => (
-                                    <option key={option.value} value={option.value}>{t(option.labelKey, option.fallback)}</option>
-                                ))}
-                            </select>
-                        </div>
-
-                    </div>
 
                     <div className="space-y-2">
                         <label className="block text-xs font-semibold uppercase tracking-[0.16em] text-slate-400 dark:text-zinc-500">
@@ -520,6 +452,22 @@ export default function FilmSummaryCreatePage() {
                         </div>
                     </div>
 
+                    <div className="flex items-center justify-between rounded-xl border border-slate-300 dark:border-white/10 bg-black/10 p-3">
+                        <div>
+                            <p className="text-sm font-semibold text-slate-900 dark:text-white">{t("filmSummary.addSubtitlesLabel", "Ajouter des sous-titres")}</p>
+                            <p className="text-xs text-slate-500 dark:text-zinc-400">{t("filmSummary.addSubtitlesHint", "Incruste des sous-titres avec le style par defaut dans la video generee.")}</p>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                            <input
+                                type="checkbox"
+                                checked={addSubtitles}
+                                onChange={(e) => setAddSubtitles(e.target.checked)}
+                                className="sr-only peer"
+                            />
+                            <div className="w-9 h-5 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary"></div>
+                        </label>
+                    </div>
+
                     <MediaInput
                         onProcess={handleProcess}
                         isProcessing={isProcessing}
@@ -539,8 +487,7 @@ export default function FilmSummaryCreatePage() {
                     <FilmSummaryProcessingPanel
                         status={normalizeStatus(status)}
                         stage={currentStep}
-                        phase="analysis"
-                        title={t("filmSummary.processingTitle", "Analyse de ton film")}
+                        title={isRenderStage ? t("filmSummary.renderingTitle", "Generation de ta video") : t("filmSummary.processingTitle", "Analyse de ton film")}
                         isLoadingStatus={projectJobLoading}
                         rawProgress={rawProgress}
                     />

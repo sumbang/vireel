@@ -42,19 +42,25 @@ RUN npm run build
 FROM nginxinc/nginx-unprivileged:1.27-alpine
 
 COPY nginx.conf /etc/nginx/conf.d/default.conf
-# Default file permissions from COPY (world-readable) are enough for
-# nginx -- running as non-root, whatever its exact uid -- to read the
-# static files. runtime-env.js is the one exception: it's rewritten at
-# container start by docker-entrypoint.d/10-generate-runtime-env.sh,
-# which runs as that same non-root user, so it needs write access without
-# this Dockerfile having to guess that uid (it's shipped as a build-time
-# placeholder -- see public/runtime-env.js -- precisely so this chmod has
-# an existing file to target). 666 rather than relying on directory
-# ownership: writing to an *existing* file only needs write permission on
-# the file itself, not on its containing (root-owned) directory.
-COPY --from=builder /app/dist /usr/share/nginx/html
+# This base image already runs as its own non-root "nginx" user (uid/gid
+# 101) from FROM onward -- confirmed the hard way: a plain `COPY` (always
+# root:root, regardless of the active USER) followed by `RUN chmod` on
+# that file failed with "Operation not permitted", because the RUN step
+# itself executes as that inherited non-root user, which can't chmod a
+# file it doesn't own -- root privilege or file ownership are the only
+# two ways to chmod, and this build has neither without the line below.
+#
+# `--chown=nginx:nginx` fixes that at the source: the copied files
+# (including public/runtime-env.js's build-time placeholder, see that
+# file's own comment) are owned by the same user the later `RUN chmod`
+# -- and, at container start, docker-entrypoint.d/10-generate-runtime-
+# env.sh -- run as, so chmod/write both succeed as the file's own owner,
+# no root needed. Using the symbolic name rather than a guessed numeric
+# uid also means a mismatch fails loudly at build time (unresolvable
+# chown owner) instead of silently at container runtime (today's 404).
+COPY --from=builder --chown=nginx:nginx /app/dist /usr/share/nginx/html
 RUN chmod 666 /usr/share/nginx/html/runtime-env.js
-COPY docker-entrypoint.d/10-generate-runtime-env.sh /docker-entrypoint.d/10-generate-runtime-env.sh
+COPY --chown=nginx:nginx docker-entrypoint.d/10-generate-runtime-env.sh /docker-entrypoint.d/10-generate-runtime-env.sh
 RUN chmod +x /docker-entrypoint.d/10-generate-runtime-env.sh
 
 EXPOSE 8080

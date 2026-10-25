@@ -18,6 +18,7 @@ import ipaddress
 import socket
 import sys
 import types
+from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta, date
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
@@ -14579,6 +14580,13 @@ async def create_film_summary(
     await reel_job_manager.enqueue_job(film_job_id)
 
     film_summary_id = _row_field(film_row, "id")
+    settings = FilmSummaryGenerationSettings(
+        target_duration_seconds=resolved_target_duration,
+        narration_language=resolved_narration_language,
+        narration_style=resolved_narration_style,
+        voice_id=resolved_voice_id,
+        subtitles_enabled=resolved_add_subtitles,
+    )
     _spawn_background_task(_run_film_summary_analysis_job(
         job_id=film_job_id,
         user_id=user_id,
@@ -14590,11 +14598,7 @@ async def create_film_summary(
         local_duration=local_duration,
         size_bytes=float(size_bytes),
         analysis_required_credits=analysis_required_credits,
-        target_duration_seconds=resolved_target_duration,
-        narration_language=resolved_narration_language,
-        narration_style=resolved_narration_style,
-        voice_id=resolved_voice_id,
-        subtitles_enabled=resolved_add_subtitles,
+        settings=settings,
     ))
 
     return {
@@ -14632,19 +14636,34 @@ async def _mark_film_summary_job_terminal(
             logger.warning(f"Failed to update project status to failed: {str(e)}")
 
 
+@dataclass
+class FilmSummaryGenerationSettings:
+    """Bundles the generation choices made once at creation/retry time
+    (target duration, language, narration style, voice, subtitles) that
+    then flow unchanged through the whole analysis -> render chain --
+    without this, each job-runner/finalize function in that chain would
+    need a near-identical handful of extra parameters on top of its own
+    (job_id, film_summary_id, paths, credits, ...), pushing several of them
+    past SonarQube's python:S107 13-parameter limit."""
+    target_duration_seconds: float
+    narration_language: str
+    narration_style: str
+    voice_id: str
+    subtitles_enabled: bool
+    source_language: str = ""
+    subtitle_style: Optional[Dict[str, Any]] = None
+
+
 async def _run_film_summary_analysis_job(
     job_id: str, user_id: str, film_summary_id: Optional[str], project_id: Optional[str],
     input_path: str, output_dir: str, source_s3_key: Optional[str], local_duration: float,
-    size_bytes: float, analysis_required_credits: float, target_duration_seconds: float,
-    narration_language: str, narration_style: str, voice_id: str, subtitles_enabled: bool,
-    source_language: Optional[str] = None,
+    size_bytes: float, analysis_required_credits: float, settings: FilmSummaryGenerationSettings,
 ) -> None:
     try:
         await reel_job_manager.start_job(job_id)
         await _run_film_summary_analysis_pipeline_stages(
             job_id, user_id, film_summary_id, project_id, input_path, output_dir, source_s3_key,
-            local_duration, size_bytes, analysis_required_credits, target_duration_seconds,
-            narration_language, narration_style, voice_id, subtitles_enabled, source_language=source_language,
+            local_duration, size_bytes, analysis_required_credits, settings,
         )
     except film_summary.FilmSummaryValidationError as exc:
         await _handle_film_summary_validation_failure(exc, job_id, user_id, film_summary_id, project_id, analysis_required_credits)
@@ -14821,9 +14840,8 @@ async def _run_planning_and_validation_stages(
 async def _run_film_summary_analysis_pipeline_stages(
     job_id: str, user_id: str, film_summary_id: Optional[str], project_id: Optional[str], input_path: str,
     output_dir: str, source_s3_key: Optional[str],
-    local_duration: float, size_bytes: float, analysis_required_credits: float, target_duration_seconds: float,
-    narration_language: str, narration_style: str, voice_id: str, subtitles_enabled: bool,
-    source_language: Optional[str] = None,
+    local_duration: float, size_bytes: float, analysis_required_credits: float,
+    settings: FilmSummaryGenerationSettings,
 ) -> None:
     # Niveau 1 technical validation already ran synchronously in
     # create_film_summary, before the job/credits reservation even
@@ -14835,15 +14853,15 @@ async def _run_film_summary_analysis_pipeline_stages(
     # "processing continues only if validation succeeds" for the one stage
     # that actually dominates cost.
     transcript_segments, scene_index, detected_language = await _run_transcription_and_scene_detection_stages(
-        job_id, user_id, film_summary_id, input_path, source_language=source_language,
+        job_id, user_id, film_summary_id, input_path, source_language=settings.source_language,
     )
     classification_usage = await _run_classification_gate(
-        job_id, user_id, film_summary_id, local_duration, narration_language or detected_language,
+        job_id, user_id, film_summary_id, local_duration, settings.narration_language or detected_language,
         input_path, transcript_segments, scene_index,
     )
     plan, validation_report, planning_usage = await _run_planning_and_validation_stages(
-        job_id, user_id, film_summary_id, local_duration, target_duration_seconds,
-        detected_language, narration_language, narration_style, transcript_segments, scene_index,
+        job_id, user_id, film_summary_id, local_duration, settings.target_duration_seconds,
+        detected_language, settings.narration_language, settings.narration_style, transcript_segments, scene_index,
     )
     total_usage = {
         "prompt_tokens": classification_usage.get("prompt_tokens", 0) + planning_usage.get("prompt_tokens", 0),
@@ -14852,7 +14870,7 @@ async def _run_film_summary_analysis_pipeline_stages(
     await _finalize_film_summary_analysis(
         job_id, user_id, film_summary_id, project_id, local_duration, size_bytes,
         analysis_required_credits, plan, validation_report, total_usage,
-        output_dir, source_s3_key, voice_id, subtitles_enabled, narration_language,
+        output_dir, source_s3_key, settings,
     )
 
 
@@ -14871,12 +14889,11 @@ async def _finalize_film_summary_analysis(
     job_id: str, user_id: str, film_summary_id: Optional[str], project_id: Optional[str],
     local_duration: float, size_bytes: float, analysis_required_credits: float,
     plan: Dict[str, Any], validation_report: Dict[str, Any], usage: Dict[str, Any],
-    output_dir: str, source_s3_key: Optional[str], voice_id: str, subtitles_enabled: bool,
-    narration_language: str, subtitle_style: Optional[Dict[str, Any]] = None,
+    output_dir: str, source_s3_key: Optional[str], settings: FilmSummaryGenerationSettings,
 ) -> None:
     cost_breakdown = _build_film_summary_analysis_cost_breakdown(local_duration, size_bytes, usage)
     analysis_final_credits = float(cost_breakdown.get("final_credits") or 0.0)
-    resolved_voice_id = film_summary.resolve_tts_voice(voice_id, FILM_SUMMARY_TTS_DEFAULT_VOICE)
+    resolved_voice_id = film_summary.resolve_tts_voice(settings.voice_id, FILM_SUMMARY_TTS_DEFAULT_VOICE)
 
     if film_summary_id and is_supabase_configured():
         await supabase_update_film_summary(film_summary_id, user_id, {
@@ -14890,7 +14907,7 @@ async def _finalize_film_summary_analysis(
             "billing_details": cost_breakdown,
             "total_cost_usd": cost_breakdown.get("total_usd", 0.0),
             "voice_id": resolved_voice_id,
-            "subtitles_enabled": subtitles_enabled,
+            "subtitles_enabled": settings.subtitles_enabled,
         })
         # No storage_delta here: the source video is transient (deleted once
         # the render finishes -- see _run_film_summary_render_pipeline_stages),
@@ -14934,7 +14951,7 @@ async def _finalize_film_summary_analysis(
     try:
         await _run_film_summary_render_pipeline_stages(
             job_id, user_id, film_summary_id, project_id, source_s3_key, output_dir, plan, resolved_voice_id,
-            narration_language, subtitles_enabled=subtitles_enabled, subtitle_style=subtitle_style,
+            settings.narration_language, subtitles_enabled=settings.subtitles_enabled, subtitle_style=settings.subtitle_style,
             render_required_credits=render_required_credits, analysis_actual_credits=analysis_final_credits,
         )
     except film_summary.FilmSummaryValidationError as exc:
@@ -15493,6 +15510,15 @@ async def retry_film_summary_endpoint(film_summary_id: str, user_id: Annotated[s
         film_summary_id, user_id, _retry_film_summary_status_updates(retry_job_id),
     )
 
+    settings = FilmSummaryGenerationSettings(
+        target_duration_seconds=row.get("target_duration_seconds") or 0,
+        source_language=row.get("source_language") or "",
+        narration_language=row.get("narration_language") or "",
+        narration_style=row.get("narration_style") or "cinematic",
+        voice_id=row.get("voice_id") or "",
+        subtitles_enabled=bool(row.get("subtitles_enabled")),
+        subtitle_style=row.get("subtitle_style"),
+    )
     _spawn_background_task(_run_film_summary_retry_job(
         job_id=retry_job_id,
         user_id=user_id,
@@ -15502,13 +15528,7 @@ async def retry_film_summary_endpoint(film_summary_id: str, user_id: Annotated[s
         output_dir=output_dir,
         local_duration=local_duration,
         analysis_required_credits=analysis_required_credits,
-        target_duration_seconds=row.get("target_duration_seconds") or 0,
-        source_language=row.get("source_language") or "",
-        narration_language=row.get("narration_language") or "",
-        narration_style=row.get("narration_style") or "cinematic",
-        voice_id=row.get("voice_id") or "",
-        subtitles_enabled=bool(row.get("subtitles_enabled")),
-        subtitle_style=row.get("subtitle_style"),
+        settings=settings,
         cached={
             "transcript_segments": row.get("transcript_segments") or [],
             "scene_index": row.get("scene_index") or [],
@@ -15607,9 +15627,8 @@ async def _resume_film_summary_analysis_from_cache(
 
 async def _run_film_summary_retry_job(
     job_id: str, user_id: str, film_summary_id: str, project_id: Optional[str], source_s3_key: Optional[str],
-    output_dir: str, local_duration: float, analysis_required_credits: float, target_duration_seconds: float,
-    source_language: str, narration_language: str, narration_style: str, voice_id: str, subtitles_enabled: bool,
-    subtitle_style: Optional[Dict[str, Any]], cached: Dict[str, Any],
+    output_dir: str, local_duration: float, analysis_required_credits: float,
+    settings: FilmSummaryGenerationSettings, cached: Dict[str, Any],
 ) -> None:
     try:
         await reel_job_manager.start_job(job_id)
@@ -15619,15 +15638,14 @@ async def _run_film_summary_retry_job(
             raise film_summary.FilmSummaryValidationError(film_summary.FilmSummaryErrorCode.RENDER_FAILED, "Source video is not available for retry")
 
         plan, validation_report, usage = await _resume_film_summary_analysis_from_cache(
-            job_id, user_id, film_summary_id, input_path, local_duration, target_duration_seconds,
-            source_language, narration_language, narration_style, cached,
+            job_id, user_id, film_summary_id, input_path, local_duration, settings.target_duration_seconds,
+            settings.source_language, settings.narration_language, settings.narration_style, cached,
         )
 
         await _finalize_film_summary_analysis(
             job_id, user_id, film_summary_id, project_id, local_duration, 0.0,
             analysis_required_credits, plan, validation_report, usage,
-            output_dir, source_s3_key, voice_id, subtitles_enabled, narration_language,
-            subtitle_style=subtitle_style,
+            output_dir, source_s3_key, settings,
         )
     except film_summary.FilmSummaryValidationError as exc:
         await _handle_film_summary_validation_failure(exc, job_id, user_id, film_summary_id, project_id, analysis_required_credits)

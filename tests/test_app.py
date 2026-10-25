@@ -3302,10 +3302,14 @@ def test_finalize_film_summary_analysis_never_debits_source_storage(monkeypatch)
     app._run_film_summary_render_pipeline_stages = AsyncMock()
 
     one_gb_in_bytes = 1024 ** 3
+    settings = app.FilmSummaryGenerationSettings(
+        target_duration_seconds=300.0, narration_language="fr", narration_style="cinematic",
+        voice_id="cedar", subtitles_enabled=False,
+    )
     asyncio.run(app._finalize_film_summary_analysis(
         "job-1", "u1", "fs-1", "proj-1", 300.0, float(one_gb_in_bytes), 5.0,
         {"segments": []}, {"valid": True, "errors": [], "warnings": []}, {"prompt_tokens": 0, "completion_tokens": 0},
-        "/tmp/film-summary-job-1", "source/key.mp4", "cedar", False, "fr",
+        "/tmp/film-summary-job-1", "source/key.mp4", settings,
     ))
 
     debit_mock.assert_awaited_once()
@@ -3333,10 +3337,14 @@ def test_finalize_film_summary_analysis_insufficient_render_credits_does_not_ref
     app.reel_job_manager.refund_reservation = refund_mock
     app._create_notification = AsyncMock()
 
+    settings = app.FilmSummaryGenerationSettings(
+        target_duration_seconds=300.0, narration_language="fr", narration_style="cinematic",
+        voice_id="cedar", subtitles_enabled=False,
+    )
     asyncio.run(app._finalize_film_summary_analysis(
         "job-1", "u1", "fs-1", "proj-1", 300.0, 0.0, 5.0,
         {"segments": []}, {"valid": True, "errors": [], "warnings": []}, {"prompt_tokens": 0, "completion_tokens": 0},
-        "/tmp/film-summary-job-1", "source/key.mp4", "cedar", False, "fr",
+        "/tmp/film-summary-job-1", "source/key.mp4", settings,
     ))
 
     debit_mock.assert_awaited_once()

@@ -1,10 +1,11 @@
 // Configuration for API endpoints
-// If VITE_API_URL is set (e.g. in production), use it.
+// If API_URL is set (e.g. in production), use it.
 // Otherwise, default to empty string which means relative paths (proxied in dev).
+import { getRuntimeEnv } from "./lib/runtimeEnv";
 
-export const API_BASE_URL = import.meta.env.VITE_API_URL || '';
+export const API_BASE_URL = getRuntimeEnv('API_URL', '');
 
-const HIDE_SOCIAL_PLATFORMS_FALLBACK = String(import.meta.env.VITE_HIDE_SOCIAL_PLATFORMS || '').toLowerCase();
+const HIDE_SOCIAL_PLATFORMS_FALLBACK = String(getRuntimeEnv('HIDE_SOCIAL_PLATFORMS', '')).toLowerCase();
 const HIDE_SOCIAL_PLATFORMS_FALLBACK_ENABLED = ["1", "true", "yes", "on"].includes(HIDE_SOCIAL_PLATFORMS_FALLBACK);
 
 let appConfigPromise;

@@ -73,6 +73,12 @@
 
 <body>
   <div id="root"></div>
+  <!-- Generated at container start from the deployment's own .env (see
+       docker-entrypoint.d/10-generate-runtime-env.sh and
+       src/lib/runtimeEnv.js) -- absent in local dev, where the app falls
+       back to Vite's build-time VITE_* env vars instead. Must load before
+       the app bundle. -->
+  <script src="/runtime-env.js"></script>
   <script type="module" src="/src/main.jsx"></script>
 </body>
 

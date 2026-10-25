@@ -326,6 +326,27 @@ ANONYMOUS_STORIES_ENABLED = os.environ.get("ANONYMOUS_STORIES_ENABLED", "true").
 ANONYMOUS_STORY_MAX_DURATION_MINUTES = float(os.environ.get("ANONYMOUS_STORY_MAX_DURATION", "180"))
 STORY_JOB_MAX_ATTEMPTS = 1  # no dedicated retry worker for this queue -- see _run_anonymous_story_job
 
+# Social platform feature toggles: let ops disable one integration without a
+# deploy, independently of whether its OAuth credentials are configured.
+#
+# INSTAGRAM_ENABLED: Meta has refused this app's Instagram scopes
+# (instagram_business_basic, instagram_business_content_publish,
+# instagram_business_manage_insights) under App Review -- this disables
+# connecting (and reconnecting) an Instagram account entirely (see
+# _resolve_platform_config) until that's resolved, instead of sending users
+# through an OAuth flow that Meta will reject.
+INSTAGRAM_ENABLED = os.environ.get("INSTAGRAM_ENABLED", "true").lower() in ("1", "true", "yes")
+# LINKEDIN_INSIGHTS_ENABLED: gates only the "linkedin_analytics" pseudo-
+# platform (its own separate developer app, r_member_postAnalytics -- see
+# PLATFORM_CONFIG) -- connecting/reconnecting it (_resolve_platform_config)
+# and its insights sync (_INSIGHTS_SUPPORTED_PLATFORMS). Never affects the
+# regular "linkedin" publishing platform.
+LINKEDIN_INSIGHTS_ENABLED = os.environ.get("LINKEDIN_INSIGHTS_ENABLED", "true").lower() in ("1", "true", "yes")
+# TIKTOK_INSIGHTS_ENABLED: gates only insights retrieval/sync for TikTok
+# (_INSIGHTS_SUPPORTED_PLATFORMS) -- never affects connecting a TikTok
+# account or publishing to it.
+TIKTOK_INSIGHTS_ENABLED = os.environ.get("TIKTOK_INSIGHTS_ENABLED", "true").lower() in ("1", "true", "yes")
+
 # Film Summary ("Resume de film") configuration -- spec section 4 "Variables
 # de configuration proposees". Every numeric limit is environment-driven
 # (never hardcoded) and re-exposed to the frontend via GET /api/config.
@@ -16309,7 +16330,29 @@ SUPABASE_SOCIAL_INSIGHTS_CUMULATIVE_SNAPSHOTS_TABLE = os.environ.get(
 )
 SOCIAL_INSIGHTS_SYNC_INTERVAL_SECONDS = int(os.environ.get("SOCIAL_INSIGHTS_SYNC_INTERVAL_SECONDS", str(15 * 60)))
 SOCIAL_INSIGHTS_MANUAL_REFRESH_COOLDOWN_SECONDS = int(os.environ.get("SOCIAL_INSIGHTS_MANUAL_REFRESH_COOLDOWN_SECONDS", str(5 * 60)))
-_INSIGHTS_SUPPORTED_PLATFORMS = ("facebook", "instagram", "youtube", "tiktok", "linkedin_analytics")
+
+
+def _insights_supported_platforms() -> Tuple[str, ...]:
+    """Feeds the periodic sync sweep (_list_social_accounts_for_insights_sync)
+    and both insights endpoints (get_social_insights/refresh_social_insights),
+    so disabling a toggle stops that platform's insights everywhere with no
+    other call site to touch. A function (re-evaluated on each call) rather
+    than a module-level constant so tests can monkeypatch a toggle and
+    observe the effect without reimporting the module.
+
+    INSTAGRAM_ENABLED/LINKEDIN_INSIGHTS_ENABLED are stronger than this list
+    alone: _resolve_platform_config also refuses to let a disabled one even
+    connect/reconnect. TIKTOK_INSIGHTS_ENABLED is intentionally narrower --
+    TikTok must always stay connectable and able to publish/upload; this
+    toggle only ever removes "tiktok" from the tuple below, never reaches
+    _resolve_platform_config, so connecting and publishing are unaffected
+    by it."""
+    return tuple(
+        platform for platform in ("facebook", "instagram", "youtube", "tiktok", "linkedin_analytics")
+        if (platform != "instagram" or INSTAGRAM_ENABLED)
+        and (platform != "tiktok" or TIKTOK_INSIGHTS_ENABLED)
+        and (platform != "linkedin_analytics" or LINKEDIN_INSIGHTS_ENABLED)
+    )
 _SOCIAL_INSIGHTS_SNAPSHOT_METRIC_KEYS = ("followers",)
 # How many trailing days (including the day of the sync itself) each
 # periodic/manual sync re-fetches and stores, so the dashboard's weekly
@@ -16376,6 +16419,13 @@ def _decrypt_token(token_encrypted: Optional[str]) -> str:
 def _resolve_platform_config(platform: str) -> Dict[str, Any]:
     key = (platform or "").strip().lower()
     if key not in PLATFORM_CONFIG:
+        raise HTTPException(status_code=404, detail=_UNSUPPORTED_PLATFORM)
+    # Disabled via a feature toggle (INSTAGRAM_ENABLED/LINKEDIN_INSIGHTS_ENABLED)
+    # is treated exactly like an unsupported platform -- connect/callback
+    # must not advertise or attempt an OAuth flow for it while it's off.
+    if key == "instagram" and not INSTAGRAM_ENABLED:
+        raise HTTPException(status_code=404, detail=_UNSUPPORTED_PLATFORM)
+    if key == "linkedin_analytics" and not LINKEDIN_INSIGHTS_ENABLED:
         raise HTTPException(status_code=404, detail=_UNSUPPORTED_PLATFORM)
     config = PLATFORM_CONFIG[key]
     if not config.get("client_id") or not config.get("client_secret"):
@@ -16692,13 +16742,13 @@ async def _upsert_social_account(
 
 async def _list_social_accounts_for_insights_sync() -> List[Dict[str, Any]]:
     """Every connected account on a platform this app can fetch insights
-    for (see _INSIGHTS_SUPPORTED_PLATFORMS), across ALL users -- the
+    for (see _insights_supported_platforms), across ALL users -- the
     periodic sync job's (sync_social_insights_jobs) input list."""
     client = await supabase_get_client()
     response = (
         await client.table(SUPABASE_SOCIAL_ACCOUNTS_TABLE)
         .select("*")
-        .in_("platform", list(_INSIGHTS_SUPPORTED_PLATFORMS))
+        .in_("platform", list(_insights_supported_platforms()))
         .execute()
     )
     return response.data or []
@@ -19976,7 +20026,7 @@ async def get_social_insights(
         raise HTTPException(status_code=404, detail=_SOCIAL_ACCOUNT_NOT_FOUND)
 
     platform = str(account.get("platform") or "")
-    if platform not in _INSIGHTS_SUPPORTED_PLATFORMS:
+    if platform not in _insights_supported_platforms():
         result = {
             "supported": False,
             "reason": f"{platform.capitalize()} analytics require special platform partner access not yet available.",
@@ -20017,7 +20067,7 @@ async def refresh_social_insights(
         raise HTTPException(status_code=404, detail=_SOCIAL_ACCOUNT_NOT_FOUND)
 
     platform = str(account.get("platform") or "")
-    if platform not in _INSIGHTS_SUPPORTED_PLATFORMS:
+    if platform not in _insights_supported_platforms():
         raise HTTPException(status_code=400, detail=f"{platform.capitalize()} analytics are not supported.")
 
     last_synced_at = account.get("last_insights_synced_at")

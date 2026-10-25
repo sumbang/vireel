@@ -10379,6 +10379,21 @@ def test_connect_tiktok_forces_authorization_screen(monkeypatch):
     assert "disable_auto_auth=1" in result["auth_url"]
 
 
+def test_connect_tiktok_unaffected_by_insights_toggle(monkeypatch):
+    # TIKTOK_INSIGHTS_ENABLED must only ever remove "tiktok" from the
+    # insights sync/endpoints (_insights_supported_platforms) -- connecting
+    # and publishing/uploading to TikTok must keep working regardless, even
+    # with insights retrieval turned off.
+    app = _import_app_with_stubs(monkeypatch)
+    monkeypatch.setitem(app.PLATFORM_CONFIG["tiktok"], "client_id", "test-client-key")
+    monkeypatch.setitem(app.PLATFORM_CONFIG["tiktok"], "client_secret", "test-client-secret")
+    monkeypatch.setattr(app, "TIKTOK_INSIGHTS_ENABLED", False)
+
+    result = app.connect("tiktok", None, "u1")
+
+    assert "auth_url" in result
+
+
 def test_connect_instagram_forces_reauth_screen(monkeypatch):
     # Same bug as TikTok's above, same fix shape: Business Login for
     # Instagram otherwise lets an already-logged-in browser session
@@ -10479,6 +10494,58 @@ def test_platform_config_splits_linkedin_publishing_and_analytics_apps(monkeypat
     assert "r_member_postAnalytics" not in publish_scopes
     assert "r_member_postAnalytics" in analytics_scopes
     assert "w_member_social" not in analytics_scopes
+
+
+def test_connect_instagram_blocked_when_disabled(monkeypatch):
+    # INSTAGRAM_ENABLED is the kill switch for Meta's rejection of this
+    # app's instagram_business_basic/content_publish/manage_insights scopes
+    # -- connecting (or reconnecting) an Instagram account must be refused
+    # outright while it's off, exactly like an unsupported platform, rather
+    # than sending the user into an OAuth flow Meta will reject.
+    app = _import_app_with_stubs(monkeypatch)
+    monkeypatch.setitem(app.PLATFORM_CONFIG["instagram"], "client_id", "test-app-id")
+    monkeypatch.setitem(app.PLATFORM_CONFIG["instagram"], "client_secret", "test-app-secret")
+    monkeypatch.setattr(app, "INSTAGRAM_ENABLED", False)
+
+    with pytest.raises(app.HTTPException) as exc_info:
+        app.connect("instagram", None, "u1")
+    assert exc_info.value.status_code == 404
+
+    # Re-enabling must restore the normal flow.
+    monkeypatch.setattr(app, "INSTAGRAM_ENABLED", True)
+    result = app.connect("instagram", None, "u1")
+    assert "auth_url" in result
+
+
+def test_connect_linkedin_analytics_blocked_when_disabled_but_linkedin_still_works(monkeypatch):
+    # LINKEDIN_INSIGHTS_ENABLED only gates the separate "linkedin_analytics"
+    # developer app (r_member_postAnalytics) -- the regular "linkedin"
+    # publishing platform must keep working when it's off.
+    app = _import_app_with_stubs(monkeypatch)
+    monkeypatch.setitem(app.PLATFORM_CONFIG["linkedin"], "client_id", "test-client-id")
+    monkeypatch.setitem(app.PLATFORM_CONFIG["linkedin"], "client_secret", "test-client-secret")
+    monkeypatch.setitem(app.PLATFORM_CONFIG["linkedin_analytics"], "client_id", "test-client-id-2")
+    monkeypatch.setitem(app.PLATFORM_CONFIG["linkedin_analytics"], "client_secret", "test-client-secret-2")
+    monkeypatch.setattr(app, "LINKEDIN_INSIGHTS_ENABLED", False)
+
+    with pytest.raises(app.HTTPException) as exc_info:
+        app.connect("linkedin_analytics", None, "u1")
+    assert exc_info.value.status_code == 404
+
+    result = app.connect("linkedin", None, "u1")
+    assert "auth_url" in result
+
+
+def test_insights_supported_platforms_respects_toggles(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+
+    assert app._insights_supported_platforms() == ("facebook", "instagram", "youtube", "tiktok", "linkedin_analytics")
+
+    monkeypatch.setattr(app, "INSTAGRAM_ENABLED", False)
+    monkeypatch.setattr(app, "TIKTOK_INSIGHTS_ENABLED", False)
+    monkeypatch.setattr(app, "LINKEDIN_INSIGHTS_ENABLED", False)
+    remaining = app._insights_supported_platforms()
+    assert remaining == ("facebook", "youtube")
 
 
 def test_fetch_platform_identity_routes_linkedin_analytics_to_linkedin_identity(monkeypatch):

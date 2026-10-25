@@ -33,6 +33,14 @@ services:
     container_name: vireel-frontend
     ports:
       - "4001:8080"
+    # Same .env as `backend`, read at container start (see
+    # dashboard/docker-entrypoint.d/10-generate-runtime-env.sh) rather than
+    # baked into the image at build time -- lets this staging container
+    # point at a different Supabase project/API URL than production's,
+    # even though both run the exact same promoted image (see
+    # .github/workflows/promote-release.yml).
+    env_file:
+      - .env
     restart: unless-stopped
     depends_on:
       - backend

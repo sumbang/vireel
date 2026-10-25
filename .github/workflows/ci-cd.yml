@@ -78,10 +78,11 @@ jobs:
       - name: Build JS
         if: matrix.service != 'backend'
         working-directory: ${{ matrix.path }}
+        # No VITE_SUPABASE_URL/VITE_SUPABASE_ANON_KEY here: the dashboard
+        # build no longer bakes environment-specific config into the
+        # bundle (see dashboard/src/lib/runtimeEnv.js) -- this step is a
+        # pure compile sanity check, its output isn't deployed.
         run: npm run build
-        env:
-          VITE_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          VITE_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
 
       # ---------------------------------------------------
       # PARTIE PYTHON (backend, à la racine)
@@ -203,9 +204,11 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
-          build-args: |
-            VITE_SUPABASE_URL=${{ secrets.SUPABASE_URL }}
-            VITE_SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}
+          # No VITE_SUPABASE_URL/VITE_SUPABASE_ANON_KEY build-args: the
+          # dashboard image is now environment-agnostic (see
+          # dashboard/src/lib/runtimeEnv.js and dashboard/Dockerfile) --
+          # Supabase/API config is supplied at container start from each
+          # VPS's own .env, not baked in here.
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

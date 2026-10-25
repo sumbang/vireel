@@ -13,7 +13,14 @@
 # values into the JS bundle at build time. See dashboard/src/lib/
 # runtimeEnv.js for how the app reads this file's output, and index.html
 # for where it's loaded.
-set -eu
+#
+# `-x` traces every command to stderr (`docker logs <container>`) -- cheap
+# diagnosability if this ever fails to write OUT_FILE again (e.g. a future
+# base-image change removes the write permission public/runtime-env.js's
+# build-time placeholder + the Dockerfile's `chmod 666` on it are meant to
+# guarantee); nothing traced here is secret beyond what already ships in
+# the public bundle (SUPABASE_URL, the public anon key, ...).
+set -eux
 
 OUT_FILE="/usr/share/nginx/html/runtime-env.js"
 

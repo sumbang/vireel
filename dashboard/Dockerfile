@@ -42,13 +42,19 @@ RUN npm run build
 FROM nginxinc/nginx-unprivileged:1.27-alpine
 
 COPY nginx.conf /etc/nginx/conf.d/default.conf
-# --chown=101:101 (the image's own non-root "nginx" uid/gid): the static
-# files must be owned by the user the container actually runs as, both so
-# nginx can read them and so docker-entrypoint.d/10-generate-runtime-env.sh
-# (which runs as that same non-root user) can write runtime-env.js into
-# this directory at container start.
-COPY --from=builder --chown=101:101 /app/dist /usr/share/nginx/html
-COPY --chown=101:101 docker-entrypoint.d/10-generate-runtime-env.sh /docker-entrypoint.d/10-generate-runtime-env.sh
+# Default file permissions from COPY (world-readable) are enough for
+# nginx -- running as non-root, whatever its exact uid -- to read the
+# static files. runtime-env.js is the one exception: it's rewritten at
+# container start by docker-entrypoint.d/10-generate-runtime-env.sh,
+# which runs as that same non-root user, so it needs write access without
+# this Dockerfile having to guess that uid (it's shipped as a build-time
+# placeholder -- see public/runtime-env.js -- precisely so this chmod has
+# an existing file to target). 666 rather than relying on directory
+# ownership: writing to an *existing* file only needs write permission on
+# the file itself, not on its containing (root-owned) directory.
+COPY --from=builder /app/dist /usr/share/nginx/html
+RUN chmod 666 /usr/share/nginx/html/runtime-env.js
+COPY docker-entrypoint.d/10-generate-runtime-env.sh /docker-entrypoint.d/10-generate-runtime-env.sh
 RUN chmod +x /docker-entrypoint.d/10-generate-runtime-env.sh
 
 EXPOSE 8080

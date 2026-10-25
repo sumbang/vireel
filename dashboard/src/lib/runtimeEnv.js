@@ -14,7 +14,7 @@
 // docker-compose.yml) is unchanged.
 export function getRuntimeEnv(key, fallback = "") {
     const runtime = typeof window !== "undefined" ? window.__RUNTIME_CONFIG__ : undefined;
-    if (runtime && runtime[key]) return runtime[key];
+    if (runtime?.[key]) return runtime[key];
     const buildTime = import.meta.env[`VITE_${key}`];
     return buildTime || fallback;
 }

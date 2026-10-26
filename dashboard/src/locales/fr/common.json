@@ -55,6 +55,11 @@
     "cleanAudio": "Nettoyer l'audio",
     "removeBadTakes": "Retirer les mauvaises prises"
   },
+  "demoAccess": {
+    "title": "Environnement réservé",
+    "description": "Cet environnement est réservé et l'accès y est restreint. Contactez un administrateur si vous pensez devoir y avoir accès.",
+    "logout": "Se déconnecter"
+  },
   "nav": {
     "abonnements": "Plan d'abonnement",
     "parrainage": "Parrainage",

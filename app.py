@@ -622,12 +622,19 @@ SUPABASE_URL_FOR_JWKS = (os.getenv("SUPABASE_URL") or "").rstrip("/")
 # Lets a single deployment (the demo instance) restrict itself to a fixed
 # list of emails without touching Supabase Auth's own sign-up settings or
 # forking the codebase -- unset/empty (the expected production
-# configuration) makes _enforce_demo_allowlist a complete no-op, so the
-# exact same image can run as both the open production deployment and a
-# gated demo one, differing only by this env var.
+# configuration) makes the allowlist check in _verify_supabase_jwt below a
+# complete no-op, so the exact same image can run as both the open
+# production deployment and a gated demo one, differing only by this env
+# var. Enforced centrally there (not a separate dependency) so it applies
+# to every endpoint behind get_user_id_header -- no per-endpoint opt-in to
+# forget.
 DEMO_ALLOWED_EMAILS = {
     e.strip().lower() for e in os.environ.get("DEMO_ALLOWED_EMAILS", "").split(",") if e.strip()
 }
+# Matched verbatim by the frontend (dashboard/src/lib/demoAccess.js) to
+# show a dedicated "reserved environment" screen instead of letting a
+# blocked account hit scattered per-page errors -- keep both in sync if
+# this ever changes.
 _DEMO_ACCOUNT_NOT_AUTHORIZED = "This account is not authorized on this deployment."
 
 

@@ -1,7 +1,9 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { getSupabaseBrowserClient } from "../lib/supabase-browser";
-import { setCachedAccessToken } from "../lib/apiAuth";
+import { setCachedAccessToken, getAuthHeaders } from "../lib/apiAuth";
 import { associateReferralCode, getStoredReferralCode } from "../lib/referral";
+import { getApiUrl } from "../config";
+import { isDemoAccessRestrictedResponse } from "../lib/demoAccess";
 
 const AuthContext = createContext(null);
 
@@ -9,6 +11,12 @@ export function AuthProvider({ children }) {
     const [session, setSession] = useState(null);
     const [user, setUser] = useState(null);
     const [loading, setLoading] = useState(true);
+    // null = not checked yet (or not logged in), true = this account is
+    // blocked on this reserved deployment (DEMO_ALLOWED_EMAILS), false =
+    // allowed. ProtectedRoute renders AccessRestrictedPage instead of any
+    // dashboard route -- even a direct/deep-linked URL -- while this is
+    // true, so this must resolve before any dashboard content is shown.
+    const [isAccessRestricted, setIsAccessRestricted] = useState(null);
 
     useEffect(() => {
         const supabase = getSupabaseBrowserClient();
@@ -68,6 +76,39 @@ export function AuthProvider({ children }) {
         associateReferralCode(user.id, referralCode);
     }, [user]);
 
+    // Any authenticated endpoint 403s with this exact detail when
+    // DEMO_ALLOWED_EMAILS is set and this account's email isn't in it (see
+    // _verify_supabase_jwt in app.py) -- /api/user/credits is used here
+    // purely as a cheap, already-always-called-on-login probe for that,
+    // not for its own data. Resolved as soon as a user exists, before any
+    // dashboard route is allowed to render.
+    useEffect(() => {
+        if (!user?.id) {
+            setIsAccessRestricted(null);
+            return;
+        }
+        let active = true;
+        fetch(getApiUrl("/api/user/credits"), { headers: getAuthHeaders(user.id) })
+            .then(async (res) => {
+                if (!active) return;
+                if (res.status === 403) {
+                    const data = await res.json().catch(() => ({}));
+                    setIsAccessRestricted(isDemoAccessRestrictedResponse(res.status, data?.detail));
+                    return;
+                }
+                setIsAccessRestricted(false);
+            })
+            .catch(() => {
+                // A transient network/server error must never strand a
+                // legitimate user on the restricted screen -- only an
+                // explicit, confirmed 403 with the demo-block detail does.
+                if (active) setIsAccessRestricted(false);
+            });
+        return () => {
+            active = false;
+        };
+    }, [user?.id]);
+
     async function logout() {
         const supabase = getSupabaseBrowserClient();
         await supabase.auth.signOut();
@@ -81,9 +122,10 @@ export function AuthProvider({ children }) {
             user,
             loading,
             isAuthenticated: Boolean(user),
+            isAccessRestricted,
             logout,
         }),
-        [session, user, loading]
+        [session, user, loading, isAccessRestricted]
     );
 
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

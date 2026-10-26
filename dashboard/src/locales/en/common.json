@@ -55,6 +55,11 @@
     "cleanAudio": "Clean audio",
     "removeBadTakes": "Remove bad takes"
   },
+  "demoAccess": {
+    "title": "Reserved environment",
+    "description": "This environment is reserved and access to it is restricted. Contact an administrator if you believe you should have access.",
+    "logout": "Log out"
+  },
   "nav": {
     "abonnements": "Subscription plan",
     "parrainage": "Referrals",

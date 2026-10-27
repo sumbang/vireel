@@ -13,14 +13,17 @@ import React from "react";
 import { AlertTriangle } from "lucide-react";
 import { useUserCredits } from "../state/UserCreditsContext";
 import { useNavigate } from "react-router-dom";
+import { useTranslation } from "../state/LanguageContext";
 
 export default function CreditGuard({
     children,
     requiredCredits = 1,
-    operationLabel = "cette opération",
+    operationLabel,
 }) {
     const { credits, totalCredits, canAfford, loading } = useUserCredits();
     const navigate = useNavigate();
+    const { t } = useTranslation();
+    const resolvedOperationLabel = operationLabel ?? t("creditGuard.defaultOperation", "cette opération");
 
     // While credits haven't loaded yet we allow the action (optimistic).
     const sufficient = canAfford(requiredCredits);
@@ -40,15 +43,18 @@ export default function CreditGuard({
             <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
                 <AlertTriangle size={13} className="shrink-0" />
                 <span>
-                    Crédits insuffisants pour {operationLabel}.
-                    Il vous faut au moins <strong>{requiredCredits.toLocaleString()} cr</strong>
-                    {" "}(solde total : <strong>{availableCredits.toLocaleString()} cr</strong>).{" "}
+                    {t("creditGuard.insufficientCredits", "Crédits insuffisants pour {{operation}}.", { operation: resolvedOperationLabel })}
+                    {" "}
+                    {t("creditGuard.required", "Il vous faut au moins {{required}} cr (solde total : {{available}} cr).", {
+                        required: requiredCredits.toLocaleString(),
+                        available: availableCredits.toLocaleString(),
+                    })}
                 </span>
                 <button
                     onClick={() => navigate("/dashboard/settings?buy=1")}
                     className="ml-auto whitespace-nowrap font-semibold underline hover:text-amber-200"
                 >
-                    Recharger
+                    {t("creditGuard.reload", "Recharger")}
                 </button>
             </div>
         </div>

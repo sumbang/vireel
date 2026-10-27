@@ -53,7 +53,8 @@
     "saturation": "Saturation",
     "removeSilence": "Remove silence",
     "cleanAudio": "Clean audio",
-    "removeBadTakes": "Remove bad takes"
+    "removeBadTakes": "Remove bad takes",
+    "customReelButton": "Custom reel"
   },
   "demoAccess": {
     "title": "Reserved environment",
@@ -206,7 +207,29 @@
       "plan_change_requires_recurring_subscription": "This action requires a recurring subscription.",
       "plan_change_subscription_cancelled": "This subscription is cancelled and can no longer change plan.",
       "no_scheduled_change": "There's no scheduled change to cancel."
-    }
+    },
+    "addCard": "Add a card",
+    "connectAnother": "Connect",
+    "currentPlan": "Current plan",
+    "deleteConnection": "Remove the connection",
+    "facebookConnectFailed": "Unable to connect selected Facebook page.",
+    "facebookPagesMissing": "No Facebook page available for selection.",
+    "facebookSelectionCanceled": "Facebook page selection canceled.",
+    "invalidFacebookPageSelection": "Invalid Facebook page selection.",
+    "loadingPaymentMethod": "Loading card...",
+    "logout": "Log out",
+    "noPaymentMethod": "No card on file",
+    "paymentMethod": "Payment method",
+    "paymentMethodError": "Unable to perform this action on the card.",
+    "paymentMethodReplaced": "Your card has been updated.",
+    "paymentMethodRevoked": "Your card has been removed.",
+    "reauthorize": "Reauthorize the connection",
+    "replaceCard": "Replace",
+    "revokeCard": "Remove",
+    "selectFacebookPage": "Select a Facebook page to connect:",
+    "socialLimitReached": "Your plan's limit for this network has been reached.",
+    "user": "User",
+    "buyCreditsTitle": "Top up credits"
   },
   "reels": {
     "title": "Generated Reels",
@@ -262,7 +285,11 @@
     "videoScan": "Video scanning",
     "scheduleWeek": "Schedule the week",
     "readyReels": "reel(s) ready. You can download them, edit them, or start a new operation.",
-    "reelGenerationFailed": "Generation failed. Reopen details to check progress and restart the operation."
+    "reelGenerationFailed": "Generation failed. Reopen details to check progress and restart the operation.",
+    "postedSuccessfully": "Posted successfully!",
+    "progress": "Progress",
+    "scheduledSuccessfully": "Scheduled successfully!",
+    "shareDisabledNoSubscription": "An active subscription is required to publish."
   },
   "generatedMedia": {
     "startAction": "Start an action",
@@ -287,7 +314,8 @@
     "untitled": "Untitled",
     "previewLabel": "Preview",
     "noDescription": "No description.",
-    "unknownDuration": "Unknown duration"
+    "unknownDuration": "Unknown duration",
+    "noPreview": "No preview available."
   },
   "thumbnailStudio": {
     "title": "AI Captions",
@@ -397,7 +425,13 @@
     "histoires": "My stories",
     "resume": "My movie summaries",
     "page-des": "Organize your operations without changing your usual actions",
-    "subtitlesdesc": "Upload local only then generate via the job queue."
+    "subtitlesdesc": "Upload local only then generate via the job queue.",
+    "back": "Back",
+    "close": "Close",
+    "loading": "Loading...",
+    "noItemsFound": "No items found",
+    "or": "or",
+    "processingProgress": "Processing progress"
   },
   "captionsModal": {
     "title": "Captions editor",
@@ -474,7 +508,26 @@
     "generating": "Generating...",
     "generate": "Generate captions",
     "generateSubtitles": "Generate subtitles",
-    "textColor": "Text color"
+    "textColor": "Text color",
+    "builtinThemes": "Built-in themes",
+    "deleteTheme": "Delete this theme",
+    "myThemes": "My themes",
+    "noCustomThemes": "Customize a theme then save it here.",
+    "resetVideo": "Reset",
+    "save": "Save",
+    "saveAsNewThemeHint": "Save the current style as a new theme",
+    "saveTheme": "Save the current style as a theme",
+    "saveThemeHint": "Tip: reuse an existing theme's name to update it.",
+    "setAsDefault": "Set as default style",
+    "setDefaultFailed": "Failed to update the default style.",
+    "setDefaultSuccess": "This style is now the default style.",
+    "themeNamePlaceholder": "Theme name",
+    "themeSaveFailed": "Failed to save the theme.",
+    "themeSaved": "Theme saved.",
+    "themes": "Themes",
+    "themesLoadFailed": "Unable to load your themes.",
+    "updateTheme": "Save ({{name}})",
+    "updateThemeHint": "Updates the \"{{name}}\" theme with the current style"
   },
   "hookModal": {
     "title": "Viral Hook",
@@ -610,7 +663,35 @@
     "anonymousStoryGenerator": "Generate a story",
     "anonymousStoryGeneratorSubtitle": "Turn a testimonial video into an anonymized written story, ready to publish.",
     "filmSummaryGenerator": "Generate a film summary",
-    "filmSummaryGeneratorSubtitle": "Turn a full film into an edited, narrated summary, ready to review before generation."
+    "filmSummaryGeneratorSubtitle": "Turn a full film into an edited, narrated summary, ready to review before generation.",
+    "analyticsAccountError": "Unable to retrieve statistics (reconnect this account in Settings).",
+    "analyticsAccountsError": "Unable to load social accounts.",
+    "analyticsComingSoon": "Coming soon, under development",
+    "analyticsEyebrow": "Social networks",
+    "analyticsLastSynced": "Updated {time}",
+    "analyticsNoAccount": "Connect a social network in Settings to see your analytics.",
+    "analyticsRefresh": "Refresh",
+    "analyticsRefreshCooldown": "Available in {s}s",
+    "analyticsRefreshFailed": "Refresh failed.",
+    "analyticsTitle": "Social network analytics",
+    "chartActivity": "Activity by content type",
+    "chartCredits": "Credits consumed",
+    "chartPublicationsByPlatform": "Publications by platform",
+    "monetizationAdCpm": "Average ad CPM",
+    "monetizationAdEarnings": "Estimated ad revenue",
+    "monetizationAdImpressions": "Ad impressions",
+    "monetizationUnavailable": "Monetization data not available for this account.",
+    "publications": "Publications",
+    "statAnonymousStories": "Anonymous stories",
+    "statCaptions": "Captions",
+    "statCreditsConsumed": "Credits consumed",
+    "statFilmSummaries": "Film summaries",
+    "statPublicationsDone": "Successful publications",
+    "statReels": "Reels",
+    "statsEmpty": "No data for this period.",
+    "statsError": "Unable to load statistics.",
+    "statsEyebrow": "Overview",
+    "statsTitle": "Statistics"
   },
   "social": {
     "socialPublications": "Social posts",
@@ -665,7 +746,20 @@
     "postComposerCommentN": "Comment {{n}}",
     "postComposerCommentTextPlaceholder": "Comment text, paste a link or add #hashtags...",
     "postComposerCommentImagePlaceholder": "Paste the image URL...",
-    "postComposerAddImage": "Add an image"
+    "postComposerAddImage": "Add an image",
+    "noPlatformConnected": "No account connected. Connect one in Settings.",
+    "postComposerCommentImageInvalidType": "This file is not an image.",
+    "postComposerCommentImageTooLarge": "Image too large (10 MB max).",
+    "postComposerCommentImageUploadFailed": "Failed to upload the image.",
+    "postComposerCommentImageUploading": "Uploading...",
+    "postComposerMediaDropzone": "Drag a photo or video here, or click to browse",
+    "postComposerMediaInvalidType": "This file must be an image or a video.",
+    "postComposerMediaLabel": "Photo or video (optional)",
+    "postComposerMediaStillUploading": "Wait for the file upload to finish.",
+    "postComposerMediaTooLarge": "File too large (200 MB max).",
+    "postComposerMediaUploadFailed": "Failed to upload the file.",
+    "postComposerMediaUploading": "Uploading...",
+    "postComposerNoAccounts": "No Facebook/LinkedIn account connected. Connect one in Settings."
   },
   "abonnement": {
     "title": "Subscription",
@@ -1014,5 +1108,80 @@
     "availableUntil": "Available until {{date}}",
     "expiresInDays": "Expires in {{days}} day(s) · Download",
     "expired": "Media expired — This file was automatically deleted per the retention policy."
+  },
+  "customReel": {
+    "durationHint": "The clip duration must be between {{min}} and {{max}} seconds.",
+    "endHandle": "Clip end",
+    "generate": "Generate this reel",
+    "generateFailed": "Custom reel generation failed.",
+    "generating": "Generating...",
+    "selected": "selected",
+    "startHandle": "Clip start",
+    "subtitle": "Move the handles to choose yourself which part to turn into a reel.",
+    "title": "Custom reel",
+    "titlePlaceholder": "Reel title (optional)"
+  },
+  "manualReel": {
+    "generateFailed": "Reel generation failed.",
+    "loadFailed": "Unable to load the scene.",
+    "noTranscript": "No transcript available for this scene.",
+    "subtitle": "Choose yourself which part of the scene to turn into a reel.",
+    "title": "Manual creation",
+    "transcript": "Transcript",
+    "unavailable": "This project's source video is no longer available for manual creation."
+  },
+  "projects": {
+    "captionProjectTitle": "Captions project",
+    "confirmDelete": "Delete this project?",
+    "count": "project(s)",
+    "delete": "Delete",
+    "manualCreationButton": "Manual creation",
+    "noPreview": "No preview",
+    "open": "Open",
+    "reelProjectTitle": "Reel project",
+    "rename": "Rename",
+    "renamePrompt": "New project name",
+    "searchPlaceholder": "Search by name or description...",
+    "statusCancelled": "Cancelled"
+  },
+  "reel": {
+    "step": "steps",
+    "videoScan": "Video scan"
+  },
+  "sidebar": {
+    "close": "Close menu",
+    "open": "Open menu",
+    "dashboard": "Dashboard",
+    "reels": "Reels",
+    "captions": "Captions",
+    "anonymousStories": "Anonymous stories",
+    "filmSummaries": "Film summaries",
+    "socialPublications": "Social publications"
+  },
+  "scheduleWeek": {
+    "title": "Schedule the week",
+    "subtitle": "{{count}} clips · 1 per day",
+    "loginRequired": "Log in to your account to schedule publications.",
+    "timeLabel": "Time",
+    "timezoneLabel": "Timezone",
+    "startFrom": "Start from",
+    "clipFallbackTitle": "Viral Short",
+    "clipLabel": "Clip {{index}}",
+    "accountsLabel": "Accounts",
+    "noAccounts": "No TikTok/Instagram/YouTube account connected.",
+    "statusScheduling": "Scheduling...",
+    "statusDone": "Completed",
+    "allScheduledSuccess": "All clips were scheduled successfully",
+    "partialSuccess": "{{success}} scheduled, {{failed}} failed",
+    "close": "Close",
+    "cancel": "Cancel",
+    "submit": "Schedule {{count}} clips",
+    "finish": "Finish"
+  },
+  "creditGuard": {
+    "defaultOperation": "this operation",
+    "insufficientCredits": "Insufficient credits for {{operation}}.",
+    "required": "You need at least {{required}} cr (total balance: {{available}} cr).",
+    "reload": "Top up"
   }
 }

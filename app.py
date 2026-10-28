@@ -10111,8 +10111,8 @@ async def create_stripe_checkout_session(
         raise _coded_error(404, "plan_not_found", _SUBSCRIPTION_PLAN_NOT_FOUND)
 
     default_base_url = _frontend_base_url(request)
-    success_url = (payload.success_url or STRIPE_SUCCESS_URL or f"{default_base_url}/dashboard/abonnement?payment=success").strip()
-    cancel_url = (payload.cancel_url or STRIPE_CANCEL_URL or f"{default_base_url}/dashboard/abonnement?payment=cancel").strip()
+    success_url = (payload.success_url or STRIPE_SUCCESS_URL or f"{default_base_url}/dashboard/abonnements?payment=success").strip()
+    cancel_url = (payload.cancel_url or STRIPE_CANCEL_URL or f"{default_base_url}/dashboard/abonnements?payment=cancel").strip()
 
     return await _create_recurring_subscription_checkout(
         request, user_id, plan, success_url=success_url, cancel_url=cancel_url,

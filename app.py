@@ -160,6 +160,7 @@ from supabase_request import (
 	get_media_asset_by_content as supabase_get_media_asset_by_content,
 	list_media_assets_due_for_expiration as supabase_list_media_assets_due_for_expiration,
 	mark_media_asset_expired as supabase_mark_media_asset_expired,
+	extend_media_asset_retention as supabase_extend_media_asset_retention,
 	mark_media_asset_deleted as supabase_mark_media_asset_deleted,
 	list_produced_media_due_for_notification as supabase_list_produced_media_due_for_notification,
 	list_media_assets_by_content_ids as supabase_list_media_assets_by_content_ids,
@@ -4311,27 +4312,18 @@ async def _assert_user_has_required_credits(user_id: str, required_credits: floa
 
 
 async def _assert_user_has_active_subscription_for_publish(user_id: str) -> None:
-    """Publishing to social networks never spends a credit, but still
-    requires EITHER an active paid subscription OR at least some valid
-    credit -- whatever its nature (subscription, promotional, or
-    purchased, all counted together): an active subscription alone is
-    always enough (even at 0 credit), and otherwise any positive total
-    across the three pools is enough on its own, with no subscription at
-    all. Only an account with neither is blocked."""
+    """Publishing to social networks never spends a credit, and credit
+    balance (standard, promotional, or purchased) is never a substitute
+    for one either -- only an active paid subscription (get_user_abonnement)
+    allows it, regardless of how much credit the account otherwise has."""
     if not is_supabase_configured():
         return
     subscription = await get_user_abonnement(user_id)
     if subscription:
         return
-    user_data = await supabase_get_user_data(user_id)
-    standard_credit = float((user_data or {}).get("credit") or 0.0)
-    bonus_batches = await supabase_list_active_promotional_credit_batches(user_id)
-    bonus_credit = sum(float(batch.get("amount_remaining") or 0.0) for batch in bonus_batches)
-    if standard_credit + bonus_credit > 0:
-        return
     raise HTTPException(
         status_code=402,
-        detail="Un abonnement actif ou des credits valides sont requis pour publier sur les reseaux sociaux.",
+        detail="Un abonnement actif est requis pour publier sur les reseaux sociaux.",
     )
 
 
@@ -4410,11 +4402,10 @@ async def _finalize_media_retention_billing(
     s3_bucket: Optional[str] = None,
     s3_key: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Fixes this media's retention policy FOREVER at the moment its
-    definitive size is known (see retention_config.resolve_retention_days
-    and the media_assets migration's module comment -- never recomputed
-    later, even if the user's subscription or the env vars change
-    afterward), persists its media_assets row, and returns a standalone
+    """Sets this media's retention policy at the moment its definitive
+    size is known (see retention_config.resolve_retention_days and the
+    media_assets migration's module comment), persists its media_assets
+    row, and returns a standalone
     retention cost line item (own USD/credit conversion, via the exact
     same billing.calculate_credits_for_operation engine already used for
     AI/processing/S3-operation costs -- never a parallel one) for the
@@ -4424,6 +4415,12 @@ async def _finalize_media_retention_billing(
     the job's own billing/credit settlement, only skip its own retention
     line item (logged) -- see also add_retention_cost_to_breakdown, which
     this re-uses for its own USD->credits conversion.
+
+    The resulting retention_expires_at is not necessarily final: if the
+    user still has an active subscription when it comes due, the
+    expiration sweep extends it again instead of deleting the file (see
+    _maybe_extend_media_asset_retention) -- it only actually expires once
+    that check finds no active subscription.
     """
     has_active_subscription = False
     if is_supabase_configured() and user_id:
@@ -10592,9 +10589,17 @@ async def _handle_subscription_payment_failed(invoice: "stripe.Invoice") -> dict
     LAST attempt, next_payment_attempt is now null/None) does this zero
     the account's pure subscription credit (supabase_zero_subscription_credit
     -- never the promotional/purchased credit batches, which stay usable
-    on their own terms regardless of the subscription's payment state).
-    A subsequent successful renewal resets it back to the plan's full
-    allowance as usual."""
+    on their own terms regardless of the subscription's payment state) and
+    disconnects every social account the user had connected
+    (_delete_all_social_accounts_for_user) -- deliberately not at the
+    earlier moment payment_end_date itself passes (get_user_abonnement
+    already calls the subscription inactive by then): Stripe's own Smart
+    Retries can still land a successful charge in the days after that
+    date, so accounts stay connected until Stripe truly gives up.
+    A subsequent successful renewal resets the credit allowance back to
+    the plan's full amount as usual, but reconnecting a social account
+    past this point is a normal fresh connection, not an automatic
+    restoration."""
     subscription_id = invoice.subscription
     if not subscription_id:
         return {"received": True, "ignored": "no_subscription_on_invoice"}
@@ -10612,6 +10617,12 @@ async def _handle_subscription_payment_failed(invoice: "stripe.Invoice") -> dict
         )
         if user_id:
             await supabase_zero_subscription_credit(user_id, operation_id=str(invoice.id or subscription_id))
+            deleted_count = await _delete_all_social_accounts_for_user(user_id)
+            if deleted_count:
+                logger.info(
+                    "Disconnected %d social account(s) for user %s after final failed renewal attempt on subscription %s",
+                    deleted_count, user_id, subscription_id,
+                )
     else:
         retry_date = datetime.fromtimestamp(invoice.next_payment_attempt, tz=timezone.utc).strftime("%d/%m/%Y")
         retry_message = f"Une nouvelle tentative de prélèvement aura lieu automatiquement le {retry_date}."
@@ -11990,7 +12001,7 @@ async def get_user_credits(request: Request, user_id: Annotated[str, Depends(get
             **bonus_summary,
             "has_credits": (promotional_credit + purchased_credit) > 0,
             "has_active_subscription": has_active_subscription,
-            "has_analytics_access": bool(abonnement) and int(abonnement.get("priorite") or 1) >= 2,
+            "has_analytics_access": has_active_subscription,
             "abo_costs": {
                 "credit":  0.0,
             },
@@ -12019,7 +12030,7 @@ async def get_user_credits(request: Request, user_id: Annotated[str, Depends(get
         **bonus_summary,
         "has_credits": (credit + promotional_credit + purchased_credit) > 0,
         "has_active_subscription": has_active_subscription,
-        "has_analytics_access": bool(abonnement) and int(abonnement.get("priorite") or 1) >= 2,
+        "has_analytics_access": has_active_subscription,
         "abo_costs": abo_costs,
         "default_costs": {
             "reel":        DEFAULT_REEL_CREDITS,
@@ -16732,6 +16743,25 @@ async def _find_social_account_by_platform_user(
     return rows[0] if rows else None
 
 
+async def _delete_all_social_accounts_for_user(user_id: str) -> int:
+    """Disconnects every social account this user has connected, on every
+    platform -- called once Stripe has definitively given up retrying a
+    subscription renewal charge (see _handle_subscription_payment_failed),
+    not merely once payment_end_date has passed (Stripe's own Smart
+    Retries can still succeed in the days after that date, independently
+    of this check). Returns how many rows were deleted, for logging."""
+    if not user_id:
+        return 0
+    client = await supabase_get_client()
+    response = (
+        await client.table(SUPABASE_SOCIAL_ACCOUNTS_TABLE)
+        .delete()
+        .eq("user_id", user_id)
+        .execute()
+    )
+    return len(response.data or [])
+
+
 async def _upsert_social_account(
     user_id: str,
     platform: str,
@@ -17046,14 +17076,60 @@ async def process_annual_credit_refill_jobs() -> None:
         await asyncio.sleep(max(300, ANNUAL_CREDIT_REFILL_INTERVAL_SECONDS))
 
 
+async def _maybe_extend_media_asset_retention(asset: Dict[str, Any]) -> bool:
+    """Called right as a media asset's retention_expires_at comes due --
+    if its owner currently has an active subscription, the window is
+    pushed out again instead of letting the file expire, using the
+    subscriber-tier retention length for its media_type
+    (RETENTION_SUBSCRIBER_SOURCE_DAYS/RETENTION_SUBSCRIBER_PRODUCED_DAYS),
+    anchored at this exact moment. Because this runs again every time the
+    (possibly already-extended) deadline is next reached, retention keeps
+    effectively renewing for as long as the subscription stays active --
+    it only actually expires once this check finds no active subscription.
+    Returns True if extended (caller must not expire the file this
+    pass), False if the normal expiration should proceed."""
+    user_id = asset.get("user_id")
+    if not user_id or not is_supabase_configured():
+        return False
+    try:
+        has_active_subscription = bool(await get_user_abonnement(user_id))
+    except Exception:
+        logger.exception(
+            "Failed to resolve subscription status while checking retention extension for media_asset %s",
+            asset.get("id"),
+        )
+        return False
+    if not has_active_subscription:
+        return False
+
+    try:
+        retention_days = resolve_retention_days(asset.get("media_type"), True)
+    except ValueError:
+        logger.warning(
+            "Unknown media_type %r on media_asset %s; cannot extend retention",
+            asset.get("media_type"), asset.get("id"),
+        )
+        return False
+
+    now = datetime.now(timezone.utc)
+    extended = await supabase_extend_media_asset_retention(
+        asset.get("id"), retention_days, now, now + timedelta(days=retention_days)
+    )
+    return extended
+
+
 async def _expire_one_media_asset(asset: Dict[str, Any]) -> None:
     """Deletes the physical S3 object, then marks the row EXPIRED -- in
     that order, and only on confirmed delete success, so an S3 failure
     (delete_s3_object returns False) leaves the row AVAILABLE for the next
     sweep to retry rather than ever marking EXPIRED for a file that's
-    still actually there (or whose deletion we can't confirm)."""
+    still actually there (or whose deletion we can't confirm). First
+    gives the owner's subscription status a chance to extend this asset's
+    retention instead (see _maybe_extend_media_asset_retention)."""
     media_id = asset.get("id")
     if not media_id:
+        return
+    if await _maybe_extend_media_asset_retention(asset):
         return
     bucket = asset.get("s3_bucket")
     key = asset.get("s3_key")

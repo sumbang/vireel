@@ -548,8 +548,8 @@ export default function DashboardAnalyticsSection({ range }) {
     const { hasAnalyticsAccess } = useUserCredits();
     const { t } = useTranslation();
 
-    // Silver subscribers don't get an upsell card here -- the whole block
-    // (including its header) is simply absent for them.
+    // Users with no active subscription don't get an upsell card here --
+    // the whole block (including its header) is simply absent for them.
     if (hasAnalyticsAccess === false) return null;
 
     return (

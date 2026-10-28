@@ -3810,8 +3810,54 @@ def test_finalize_film_summary_render_bills_retention_and_marks_source_deleted(m
     assert "retention_storage_credit_cost" in complete_mock.await_args.kwargs["cost_breakdown"]
 
 
+def test_maybe_extend_media_asset_retention_extends_when_subscribed(monkeypatch):
+    import retention_config
+    app = _import_app_with_stubs(monkeypatch)
+    monkeypatch.setattr(app, "is_supabase_configured", lambda: True)
+    monkeypatch.setattr(app, "get_user_abonnement", AsyncMock(return_value={"id": "sub1"}))
+    extend_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr(app, "supabase_extend_media_asset_retention", extend_mock)
+
+    result = asyncio.run(app._maybe_extend_media_asset_retention(
+        {"id": "m1", "user_id": "u1", "media_type": app.MEDIA_TYPE_PRODUCED}
+    ))
+
+    assert result is True
+    extend_mock.assert_awaited_once()
+    args = extend_mock.await_args.args
+    assert args[0] == "m1"
+    assert args[1] == retention_config.RETENTION_SUBSCRIBER_PRODUCED_DAYS
+
+
+def test_maybe_extend_media_asset_retention_skips_without_active_subscription(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+    monkeypatch.setattr(app, "is_supabase_configured", lambda: True)
+    monkeypatch.setattr(app, "get_user_abonnement", AsyncMock(return_value=None))
+    extend_mock = AsyncMock()
+    monkeypatch.setattr(app, "supabase_extend_media_asset_retention", extend_mock)
+
+    result = asyncio.run(app._maybe_extend_media_asset_retention(
+        {"id": "m1", "user_id": "u1", "media_type": app.MEDIA_TYPE_SOURCE}
+    ))
+
+    assert result is False
+    extend_mock.assert_not_awaited()
+
+
+def test_maybe_extend_media_asset_retention_skips_without_user_id(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+    abonnement_mock = AsyncMock()
+    monkeypatch.setattr(app, "get_user_abonnement", abonnement_mock)
+
+    result = asyncio.run(app._maybe_extend_media_asset_retention({"id": "m1", "media_type": app.MEDIA_TYPE_SOURCE}))
+
+    assert result is False
+    abonnement_mock.assert_not_awaited()
+
+
 def test_expire_one_media_asset_deletes_s3_then_marks_expired(monkeypatch):
     app = _import_app_with_stubs(monkeypatch)
+    monkeypatch.setattr(app, "_maybe_extend_media_asset_retention", AsyncMock(return_value=False))
     delete_mock = MagicMock(return_value=True)
     monkeypatch.setattr(app, "delete_s3_object", delete_mock)
     mark_mock = AsyncMock(return_value=True)
@@ -3821,6 +3867,20 @@ def test_expire_one_media_asset_deletes_s3_then_marks_expired(monkeypatch):
 
     delete_mock.assert_called_once_with("b", "k")
     mark_mock.assert_awaited_once_with("m1")
+
+
+def test_expire_one_media_asset_skips_expiration_when_retention_extended(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+    monkeypatch.setattr(app, "_maybe_extend_media_asset_retention", AsyncMock(return_value=True))
+    delete_mock = MagicMock(return_value=True)
+    monkeypatch.setattr(app, "delete_s3_object", delete_mock)
+    mark_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr(app, "supabase_mark_media_asset_expired", mark_mock)
+
+    asyncio.run(app._expire_one_media_asset({"id": "m1", "user_id": "u1", "s3_bucket": "b", "s3_key": "k"}))
+
+    delete_mock.assert_not_called()
+    mark_mock.assert_not_awaited()
 
 
 def test_expire_one_media_asset_never_marks_expired_on_s3_failure(monkeypatch):
@@ -6477,7 +6537,8 @@ def test_handle_subscription_payment_failed_sends_email_with_retry_date(monkeypa
 
 def test_handle_subscription_payment_failed_zeroes_credit_on_final_attempt(monkeypatch):
     # next_payment_attempt is null/None -- Stripe has given up retrying,
-    # so this is the signal to actually zero the subscription's credit.
+    # so this is the signal to actually zero the subscription's credit
+    # and disconnect every social account.
     app = _import_app_with_stubs(monkeypatch)
     fake_subscription = types.SimpleNamespace(metadata=_FakeStripeMetadata({"userid": "u1", "plan_name": "Pro"}))
     fake_stripe = MagicMock()
@@ -6487,6 +6548,8 @@ def test_handle_subscription_payment_failed_zeroes_credit_on_final_attempt(monke
     monkeypatch.setattr(app, "_send_transactional_email", email_mock)
     zero_credit_mock = AsyncMock()
     monkeypatch.setattr(app, "supabase_zero_subscription_credit", zero_credit_mock)
+    delete_accounts_mock = AsyncMock(return_value=2)
+    monkeypatch.setattr(app, "_delete_all_social_accounts_for_user", delete_accounts_mock)
 
     invoice = types.SimpleNamespace(
         subscription="sub_123", customer_email="user@example.com",
@@ -6498,11 +6561,12 @@ def test_handle_subscription_payment_failed_zeroes_credit_on_final_attempt(monke
     kwargs = email_mock.call_args.kwargs
     assert "Aucune nouvelle tentative" in kwargs["retry_message"]
     zero_credit_mock.assert_awaited_once_with("u1", operation_id="in_123")
+    delete_accounts_mock.assert_awaited_once_with("u1")
 
 
 def test_handle_subscription_payment_failed_no_userid_skips_credit_zeroing(monkeypatch):
     # Defensive: missing userid metadata must never crash this handler --
-    # it just can't zero anyone's credit.
+    # it just can't zero anyone's credit or disconnect anyone's accounts.
     app = _import_app_with_stubs(monkeypatch)
     fake_subscription = types.SimpleNamespace(metadata=_FakeStripeMetadata({"plan_name": "Pro"}))
     fake_stripe = MagicMock()
@@ -6511,6 +6575,8 @@ def test_handle_subscription_payment_failed_no_userid_skips_credit_zeroing(monke
     monkeypatch.setattr(app, "_send_transactional_email", MagicMock())
     zero_credit_mock = AsyncMock()
     monkeypatch.setattr(app, "supabase_zero_subscription_credit", zero_credit_mock)
+    delete_accounts_mock = AsyncMock()
+    monkeypatch.setattr(app, "_delete_all_social_accounts_for_user", delete_accounts_mock)
 
     invoice = types.SimpleNamespace(
         subscription="sub_123", customer_email="user@example.com",
@@ -6520,6 +6586,7 @@ def test_handle_subscription_payment_failed_no_userid_skips_credit_zeroing(monke
     asyncio.run(app._handle_subscription_payment_failed(invoice))
 
     zero_credit_mock.assert_not_awaited()
+    delete_accounts_mock.assert_not_awaited()
 
 
 def test_handle_subscription_payment_failed_ignores_invoice_without_subscription(monkeypatch):
@@ -7972,12 +8039,32 @@ def test_upsert_social_account_rejects_new_account_over_plan_limit(monkeypatch):
     assert table.inserted == []
 
 
-def test_assert_user_has_active_subscription_for_publish_blocks_without_subscription_or_credit(monkeypatch):
+def test_delete_all_social_accounts_for_user_deletes_by_user_id(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+    table = _FakeSocialAccountsTable()
+    monkeypatch.setattr(app, "supabase_get_client", AsyncMock(return_value=_FakeSupabaseClient(table)))
+
+    result = asyncio.run(app._delete_all_social_accounts_for_user("u1"))
+
+    assert result == 1
+    assert ("user_id", "u1") in table.deleted
+
+
+def test_delete_all_social_accounts_for_user_skips_without_id(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+    client_mock = AsyncMock()
+    monkeypatch.setattr(app, "supabase_get_client", client_mock)
+
+    result = asyncio.run(app._delete_all_social_accounts_for_user(""))
+
+    assert result == 0
+    client_mock.assert_not_awaited()
+
+
+def test_assert_user_has_active_subscription_for_publish_blocks_without_subscription(monkeypatch):
     app = _import_app_with_stubs(monkeypatch)
     monkeypatch.setattr(app, "is_supabase_configured", lambda: True)
     monkeypatch.setattr(app, "get_user_abonnement", AsyncMock(return_value=None))
-    monkeypatch.setattr(app, "supabase_get_user_data", AsyncMock(return_value={"credit": 0}))
-    monkeypatch.setattr(app, "supabase_list_active_promotional_credit_batches", AsyncMock(return_value=[]))
 
     coro = app._assert_user_has_active_subscription_for_publish("u1")
     with pytest.raises(app.HTTPException) as exc_info:
@@ -7986,49 +8073,26 @@ def test_assert_user_has_active_subscription_for_publish_blocks_without_subscrip
     assert exc_info.value.status_code == 402
 
 
-def test_assert_user_has_active_subscription_for_publish_allows_with_bonus_credit_and_no_subscription(monkeypatch):
-    # A referred user with only a promotional bonus (or anyone whose
-    # subscription lapsed but still has unused promotional/purchased
-    # credit) keeps publish access until that bonus credit runs out --
-    # the subscription requirement is bypassed, not the other way around.
+def test_assert_user_has_active_subscription_for_publish_blocks_despite_available_credit(monkeypatch):
+    # Credit (standard, promotional, or purchased) is no longer a
+    # substitute for an active subscription -- publishing requires one
+    # regardless of balance, so these credit lookups must not even be
+    # consulted.
     app = _import_app_with_stubs(monkeypatch)
     monkeypatch.setattr(app, "is_supabase_configured", lambda: True)
     monkeypatch.setattr(app, "get_user_abonnement", AsyncMock(return_value=None))
-    monkeypatch.setattr(app, "supabase_get_user_data", AsyncMock(return_value={"credit": 0}))
-    monkeypatch.setattr(app, "supabase_list_active_promotional_credit_batches", AsyncMock(
-        return_value=[{"amount_remaining": 25.0, "tier": 1}],
-    ))
-
-    asyncio.run(app._assert_user_has_active_subscription_for_publish("u1"))
-
-
-def test_assert_user_has_active_subscription_for_publish_allows_with_standard_credit_and_no_subscription(monkeypatch):
-    # "peu importe la nature des credits" -- plain subscription credit
-    # left over after the subscription itself lapsed counts just as much
-    # as a promotional/purchased batch.
-    app = _import_app_with_stubs(monkeypatch)
-    monkeypatch.setattr(app, "is_supabase_configured", lambda: True)
-    monkeypatch.setattr(app, "get_user_abonnement", AsyncMock(return_value=None))
-    monkeypatch.setattr(app, "supabase_get_user_data", AsyncMock(return_value={"credit": 10}))
-    monkeypatch.setattr(app, "supabase_list_active_promotional_credit_batches", AsyncMock(return_value=[]))
-
-    asyncio.run(app._assert_user_has_active_subscription_for_publish("u1"))
-
-
-def test_assert_user_has_active_subscription_for_publish_blocks_when_bonus_credit_exhausted(monkeypatch):
-    app = _import_app_with_stubs(monkeypatch)
-    monkeypatch.setattr(app, "is_supabase_configured", lambda: True)
-    monkeypatch.setattr(app, "get_user_abonnement", AsyncMock(return_value=None))
-    monkeypatch.setattr(app, "supabase_get_user_data", AsyncMock(return_value={"credit": 0}))
-    monkeypatch.setattr(app, "supabase_list_active_promotional_credit_batches", AsyncMock(
-        return_value=[{"amount_remaining": 0.0, "tier": 2}],
-    ))
+    credit_mock = AsyncMock(return_value={"credit": 999})
+    bonus_mock = AsyncMock(return_value=[{"amount_remaining": 25.0, "tier": 1}])
+    monkeypatch.setattr(app, "supabase_get_user_data", credit_mock)
+    monkeypatch.setattr(app, "supabase_list_active_promotional_credit_batches", bonus_mock)
 
     coro = app._assert_user_has_active_subscription_for_publish("u1")
     with pytest.raises(app.HTTPException) as exc_info:
         asyncio.run(coro)
 
     assert exc_info.value.status_code == 402
+    credit_mock.assert_not_awaited()
+    bonus_mock.assert_not_awaited()
 
 
 def test_assert_user_has_active_subscription_for_publish_allows_with_zero_credits(monkeypatch):
@@ -8037,7 +8101,6 @@ def test_assert_user_has_active_subscription_for_publish_allows_with_zero_credit
     app = _import_app_with_stubs(monkeypatch)
     monkeypatch.setattr(app, "is_supabase_configured", lambda: True)
     monkeypatch.setattr(app, "get_user_abonnement", AsyncMock(return_value={"id": "sub-1", "abonnement": "silver-plan"}))
-    monkeypatch.setattr(app, "supabase_get_user_data", AsyncMock(return_value={"credit": 0}))
 
     asyncio.run(app._assert_user_has_active_subscription_for_publish("u1"))
 
@@ -9696,6 +9759,9 @@ def test_assert_user_can_access_analytics_allows_gold_plan(monkeypatch):
 
 
 def test_get_user_credits_reports_has_analytics_access(monkeypatch):
+    # Analytics access depends only on having an active subscription --
+    # the plan's tier (priorite) no longer gates it: Silver (priorite=1)
+    # grants it just like Ultimate (priorite=3).
     app = _import_app_with_stubs(monkeypatch)
     monkeypatch.setattr(app, "is_supabase_configured", lambda: True)
     monkeypatch.setattr(app, "get_user_abonnement", AsyncMock(return_value={"priorite": 3, "abonnement": "ultimate-plan"}))
@@ -9709,6 +9775,14 @@ def test_get_user_credits_reports_has_analytics_access(monkeypatch):
     assert resp.json()["has_analytics_access"] is True
 
     monkeypatch.setattr(app, "get_user_abonnement", AsyncMock(return_value={"priorite": 1, "abonnement": "silver-plan"}))
+
+    with TestClient(app.app) as client:
+        resp = client.get("/api/user/credits", headers=_auth_headers("u1"))
+
+    assert resp.status_code == 200
+    assert resp.json()["has_analytics_access"] is True
+
+    monkeypatch.setattr(app, "get_user_abonnement", AsyncMock(return_value=None))
 
     with TestClient(app.app) as client:
         resp = client.get("/api/user/credits", headers=_auth_headers("u1"))

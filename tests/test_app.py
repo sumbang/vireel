@@ -8098,13 +8098,13 @@ def test_post_to_socials_consumes_quota_for_every_account(monkeypatch):
     quota_mock.assert_awaited_once_with("u1", 2)
 
 
-def test_get_user_max_social_accounts_defaults_to_one_without_active_plan(monkeypatch):
+def test_get_user_max_social_accounts_blocks_without_active_plan(monkeypatch):
     app = _import_app_with_stubs(monkeypatch)
     monkeypatch.setattr(app, "get_user_abonnement", AsyncMock(return_value=None))
 
     result = asyncio.run(app._get_user_max_social_accounts("u1"))
 
-    assert result == 1
+    assert result == 0
 
 
 def test_get_user_max_social_accounts_reads_active_plan(monkeypatch):
@@ -8115,6 +8115,18 @@ def test_get_user_max_social_accounts_reads_active_plan(monkeypatch):
     result = asyncio.run(app._get_user_max_social_accounts("u1"))
 
     assert result == 3
+
+
+def test_get_user_max_social_accounts_respects_explicit_zero(monkeypatch):
+    # 0 is a real, intentional value (a plan that blocks social connections
+    # entirely) -- must not be coerced back up to 1.
+    app = _import_app_with_stubs(monkeypatch)
+    monkeypatch.setattr(app, "get_user_abonnement", AsyncMock(return_value={"abonnement": "free-plan"}))
+    monkeypatch.setattr(app, "supabase_get_abonnement", AsyncMock(return_value={"max_social_account": 0}))
+
+    result = asyncio.run(app._get_user_max_social_accounts("u1"))
+
+    assert result == 0
 
 
 def test_count_social_accounts_by_platform_groups_rows(monkeypatch):

@@ -260,7 +260,12 @@ export default function SettingsPage() {
   const [socialAccounts, setSocialAccounts] = useState([]);
   const [oauthLoading, setOauthLoading] = useState({});
   const [socialError, setSocialError] = useState('');
-  const [maxSocialAccount, setMaxSocialAccount] = useState(1);
+  // Defaults to 0 (fail-closed) until /api/social/accounts resolves, to
+  // match the backend's own no-active-subscription default (see
+  // _get_user_max_social_accounts) -- better a brief flash of "requires
+  // a subscription" for a subscribed user than a brief window where the
+  // "+ Connecter" button looks enabled for one who isn't.
+  const [maxSocialAccount, setMaxSocialAccount] = useState(0);
   const [openAccountMenuId, setOpenAccountMenuId] = useState(null);
   const [linkedinInfoOpen, setLinkedinInfoOpen] = useState(false);
 
@@ -357,7 +362,7 @@ export default function SettingsPage() {
       const data = await response.json();
       const accounts = Array.isArray(data?.accounts) ? data.accounts : [];
       setSocialAccounts(accounts);
-      setMaxSocialAccount(Number.isFinite(Number(data?.max_social_account)) ? Number(data.max_social_account) : 1);
+      setMaxSocialAccount(Number.isFinite(Number(data?.max_social_account)) ? Number(data.max_social_account) : 0);
       syncConnectedNetworksCache(accounts);
     } catch (error) {
       setSocialError(error.message || t("settings.socialError","Impossible de charger les comptes sociaux."));
@@ -1155,6 +1160,12 @@ export default function SettingsPage() {
           </div>
         ) : null}
 
+        {maxSocialAccount <= 0 ? (
+          <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+            <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+            <span>{t('settings.socialAccountsRequireSubscription', 'Un abonnement actif est requis pour connecter des comptes sociaux.')}</span>
+          </div>
+        ) : null}
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {SOCIAL_NETWORKS.map((network) => {
@@ -1253,7 +1264,13 @@ export default function SettingsPage() {
                 <button
                   type="button"
                   disabled={isConnectBusy || isAtLimit}
-                  title={isAtLimit ? t('settings.socialLimitReached', "Limite de votre offre atteinte pour ce reseau.") : undefined}
+                  title={
+                    isAtLimit
+                      ? (maxSocialAccount <= 0
+                          ? t('settings.socialAccountsRequireSubscription', 'Un abonnement actif est requis pour connecter des comptes sociaux.')
+                          : t('settings.socialLimitReached', "Limite de votre offre atteinte pour ce reseau."))
+                      : undefined
+                  }
                   onClick={() => connectPlatform(network.id)}
                   className="w-full rounded-md bg-primary px-2 py-1.5 text-xs font-semibold text-white hover:bg-blue-500 disabled:opacity-40 inline-flex items-center justify-center gap-1"
                 >

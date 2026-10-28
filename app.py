@@ -11280,7 +11280,9 @@ async def _assert_plan_change_social_accounts_within_limits(user_id: str, new_pl
     is the only safety net available and applies to every classification,
     including a SCHEDULED downgrade (it would be too late to catch this
     once the schedule fires on its own, unattended)."""
-    new_max_social = max(1, int(new_plan.get("max_social_account") or 1))
+    # 0 is a real, intentional value here (see _get_user_max_social_accounts) --
+    # not treated as "unset".
+    new_max_social = max(0, int(new_plan.get("max_social_account") or 0))
     counts = await _count_social_accounts_by_platform(user_id)
     over_limit_platforms = {platform: count for platform, count in counts.items() if count > new_max_social}
     if over_limit_platforms:
@@ -16690,13 +16692,19 @@ async def _get_active_plan_for_user(user_id: str) -> Optional[Dict[str, Any]]:
 
 async def _get_user_max_social_accounts(user_id: str) -> int:
     """How many accounts of EACH platform the user's active plan allows --
-    defaults to 1 (the lowest tier) with no active paid subscription,
-    matching get_user_abonnement's own priorite fallback."""
+    0 (no connection allowed at all, on any platform) with no active
+    subscription, or if the active plan's own max_social_account is
+    explicitly 0. Note: 0 must be treated as a real, intentional value
+    here, not an "unset" placeholder -- `... or 1`/`max(1, ...)` would
+    silently coerce it back up to 1 and defeat the whole point of a
+    plan/no-subscription state that blocks social connections entirely."""
     plan = await _get_active_plan_for_user(user_id)
+    if plan is None:
+        return 0
     try:
-        return max(1, int((plan or {}).get("max_social_account") or 1))
+        return max(0, int(plan.get("max_social_account") or 0))
     except (TypeError, ValueError):
-        return 1
+        return 0
 
 
 async def _get_user_max_comments_per_post(user_id: str) -> int:
@@ -16738,8 +16746,10 @@ async def _upsert_social_account(
     platform_user_id) always just refreshes its row. Connecting a genuinely
     new one for this platform is gated behind the user's plan allowance
     (see _get_user_max_social_accounts) -- e.g. Silver allows 1 Facebook
-    Page, Gold 3, Ultimate 10 -- so the only way to connect more is to
-    upgrade, and downgrading below what's already connected is blocked in
+    Page, Gold 3, Ultimate 10, and no active subscription allows 0 (blocks
+    connecting a new account on any platform entirely) -- so the only way
+    to connect more is to upgrade/subscribe, and downgrading below what's
+    already connected is blocked in
     change_souscription_plan instead of silently dropping accounts here."""
     client = await supabase_get_client()
     expires_at = datetime.fromtimestamp(time.time() + max(expires_in, 60), tz=timezone.utc).isoformat()
@@ -16768,6 +16778,11 @@ async def _upsert_social_account(
     counts = await _count_social_accounts_by_platform(user_id)
     max_allowed = await _get_user_max_social_accounts(user_id)
     if counts.get(platform, 0) >= max_allowed:
+        if max_allowed <= 0:
+            raise HTTPException(
+                status_code=403,
+                detail="Un abonnement actif est requis pour connecter un compte social.",
+            )
         raise HTTPException(
             status_code=403,
             detail=(

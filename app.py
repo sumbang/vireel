@@ -435,6 +435,13 @@ STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 STRIPE_CURRENCY = os.environ.get("STRIPE_CURRENCY", "eur").lower()
 STRIPE_SUCCESS_URL = os.environ.get("STRIPE_SUCCESS_URL", "")
 STRIPE_CANCEL_URL = os.environ.get("STRIPE_CANCEL_URL", "")
+# Stripe's "Managed Payments" (on by default for newer Stripe accounts)
+# bundles automatic tax calculation (VAT/sales tax) into Checkout --
+# defaults to disabled here so a subscription/credit purchase is charged
+# at the plain listed price, with no tax added on top. Set to
+# "true"/"1"/"yes" to let Stripe add tax again (e.g. if the business
+# later needs Stripe to handle VAT compliance in some markets).
+STRIPE_MANAGED_PAYMENTS_ENABLED = os.environ.get("STRIPE_MANAGED_PAYMENTS_ENABLED", "false").strip().lower() in ("1", "true", "yes")
 STORAGE_RETENTION_PERIODE_DAYS = max(0, int(os.environ.get("STORAGE_RETENTION_PERIODE", "7") or "7"))
 MIN_OPERATION_START_CREDITS = float(os.environ.get("MIN_OPERATION_START_CREDITS", "1"))
 
@@ -10079,6 +10086,7 @@ async def _create_recurring_subscription_checkout(
             # userid/abonnement straight off the subscription without a
             # separate lookup table mapping Stripe subscriptions to users.
             subscription_data={"metadata": metadata},
+            managed_payments={"enabled": STRIPE_MANAGED_PAYMENTS_ENABLED},
         )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Stripe checkout error: {exc}")
@@ -11112,12 +11120,13 @@ async def replace_souscription_payment_method(
             success_url=f"{default_base_url}/dashboard/settings?payment_method=success",
             cancel_url=f"{default_base_url}/dashboard/settings?payment_method=cancel",
             metadata={"userid": user_id},
-            # Managed Payments (on by default for newer Stripe accounts)
-            # only allows mode="subscription"/"payment" and rejects
-            # mode="setup" outright ("Invalid mode: setup") -- it has
-            # nothing to manage for a card-only setup session anyway, so
-            # it's turned off for this specific request rather than for
-            # the account.
+            # Managed Payments only allows mode="subscription"/"payment"
+            # and rejects mode="setup" outright ("Invalid mode: setup") --
+            # it has nothing to manage for a card-only setup session
+            # anyway, so this is always False here, unlike the
+            # STRIPE_MANAGED_PAYMENTS_ENABLED-driven toggle on the other
+            # two Checkout Session calls (it would break this one, not
+            # just add tax).
             managed_payments={"enabled": False},
         )
     except Exception as exc:
@@ -11138,14 +11147,17 @@ async def replace_souscription_payment_method(
 #    on every Price.create/product_data call is only there because
 #    Subscription.modify/SubscriptionSchedule.modify reject an item with
 #    "the product tax code is missing" once Stripe Tax or Managed
-#    Payments is active on the account -- it's a defensive no-op on an
-#    account that never turns Tax on, and the actual tax calculation (if
-#    any) is entirely Stripe's own, outside this code's control.
-#  - Managed Payments must stay OFF for mode="subscription"/"setup"
-#    Checkout Sessions the way the rest of this file already disables it
-#    (see create_recurring_subscription_checkout/replace_souscription_
-#    payment_method) -- unrelated to this rework, called out here only
-#    because a newer Stripe account may have it on by default.
+#    Payments is active on the account -- it's a defensive no-op
+#    regardless of STRIPE_MANAGED_PAYMENTS_ENABLED's value.
+#  - Managed Payments defaults OFF on every Checkout Session this file
+#    creates (STRIPE_MANAGED_PAYMENTS_ENABLED, see
+#    create_recurring_subscription_checkout/buy_credits_checkout)
+#    so Stripe never adds tax on top of a plan/credit purchase's listed
+#    price -- set that env var to re-enable it if the business later
+#    needs Stripe to handle VAT compliance in some market. The
+#    mode="setup" card-replacement session (replace_souscription_
+#    payment_method) always keeps it OFF regardless of that var: Managed
+#    Payments rejects mode="setup" outright.
 #  - Webhook endpoint: no NEW event type is required beyond what this
 #    app already subscribes to. invoice.paid is now dispatched for
 #    BOTH billing_reason "subscription_cycle" (the pre-existing ordinary
@@ -12619,6 +12631,7 @@ async def buy_credits_checkout(
                 }
             ],
             metadata=metadata,
+            managed_payments={"enabled": STRIPE_MANAGED_PAYMENTS_ENABLED},
         )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Stripe checkout error: {exc}")

@@ -431,7 +431,13 @@
     "loading": "Loading...",
     "noItemsFound": "No items found",
     "or": "or",
-    "processingProgress": "Processing progress"
+    "processingProgress": "Processing progress",
+    "deleteFailed": "Deletion failed.",
+    "authRequired": "Authentication required. Please reconnect your session.",
+    "projectNotFound": "Project not found",
+    "jobStateRecoveryFailed": "Unable to recover this project's job state.",
+    "startingProcess": "Starting process...",
+    "statusRetrievalFailed": "Unable to retrieve processing status. Please refresh or reopen this page."
   },
   "captionsModal": {
     "title": "Captions editor",
@@ -691,7 +697,28 @@
     "statsEmpty": "No data for this period.",
     "statsError": "Unable to load statistics.",
     "statsEyebrow": "Overview",
-    "statsTitle": "Statistics"
+    "statsTitle": "Statistics",
+    "range7d": "7 days",
+    "range30d": "30 days",
+    "range90d": "90 days",
+    "rangeAll": "All",
+    "chartLegendReels": "Reels",
+    "chartLegendCaptions": "Captions",
+    "chartLegendAnonymousStories": "Anonymous stories",
+    "chartLegendFilmSummaries": "Film summary",
+    "metricFollowers": "Followers",
+    "metricImpressions": "Impressions",
+    "metricReach": "Reach",
+    "metricEngagement": "Engagement",
+    "metricProfileViews": "Profile views",
+    "metricViews": "Views",
+    "metricFollowsGained": "New followers",
+    "metricFollowsLost": "Lost followers",
+    "metricWatchTime": "Minutes watched",
+    "metricSubscribersGained": "Subscribers gained",
+    "metricSubscribersLost": "Subscribers lost",
+    "metricLikes": "Likes",
+    "metricComments": "Comments"
   },
   "social": {
     "socialPublications": "Social posts",
@@ -759,7 +786,8 @@
     "postComposerMediaTooLarge": "File too large (200 MB max).",
     "postComposerMediaUploadFailed": "Failed to upload the file.",
     "postComposerMediaUploading": "Uploading...",
-    "postComposerNoAccounts": "No Facebook/LinkedIn account connected. Connect one in Settings."
+    "postComposerNoAccounts": "No Facebook/LinkedIn account connected. Connect one in Settings.",
+    "searchPlaceholder": "Search..."
   },
   "abonnement": {
     "title": "Subscription",
@@ -816,7 +844,8 @@
     "creditsBreakdown": "{{standard}} standard credits · {{promo}} promotional credits",
     "expiringBatch": "{{amount}} promotional credits expire in {{days}} day(s)",
     "creditsBreakdown3": "{{standard}} subscription credits · {{purchased}} purchased credits · {{promo}} promotional credits",
-    "expiringPurchasedBatch": "{{amount}} purchased credits expire in {{days}} day(s)"
+    "expiringPurchasedBatch": "{{amount}} purchased credits expire in {{days}} day(s)",
+    "maxSocialAccounts": "Up to {{count}} account(s) per social network"
   },
   "serviceUsage": {
     "totalAvailable": "{{total}} credits available",
@@ -1102,7 +1131,9 @@
     "errorInsufficientCredits": "You don't have enough credits for this operation.",
     "errorJobCancelled": "The operation was cancelled.",
     "sessionExpired": "Your session has expired. Please sign in again and come back to this page to keep tracking progress.",
-    "genericError": "Something went wrong. Please try again."
+    "genericError": "Something went wrong. Please try again.",
+    "stepAddingSubtitles": "Adding subtitles",
+    "stepAddingSubtitlesDesc": "Burning the chosen subtitles into the final video."
   },
   "media": {
     "availableUntil": "Available until {{date}}",
@@ -1183,5 +1214,21 @@
     "insufficientCredits": "Insufficient credits for {{operation}}.",
     "required": "You need at least {{required}} cr (total balance: {{available}} cr).",
     "reload": "Top up"
+  },
+  "captions": {
+    "localUploadOnly": "Local upload only for subtitles.",
+    "generationFailed": "Subtitle generation failed.",
+    "projectProcessingError": "This project encountered an error during processing."
+  },
+  "resultCard": {
+    "autoEditTitle": "Auto Edit",
+    "viralHookTitle": "Viral Hook"
+  },
+  "processingAnimation": {
+    "videoTitle": "Processing Video"
+  },
+  "resetPassword": {
+    "pageTitle": "Reset password",
+    "pageSubtitle": "Enter your account email to receive a link"
   }
 }

@@ -51,7 +51,7 @@ const FAQItem = ({ question, answer, isOpen, onClick }) => (
 
 export default function Landing({ onLaunchApp }) {
   const [openFaq, setOpenFaq] = React.useState(null);
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const navigate = useNavigate();
 
   const features = [
@@ -265,7 +265,7 @@ export default function Landing({ onLaunchApp }) {
 
       {/* Pricing Section -- dynamic, sourced from GET /api/abonnements
           (ordered by "ordre"), informational only (no checkout). */}
-      <LandingPricingSection t={t} />
+      <LandingPricingSection t={t} language={language} />
 
       {/* Use Cases */}
       <section className="py-10 px-6">

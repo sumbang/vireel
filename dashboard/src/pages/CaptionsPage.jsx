@@ -264,12 +264,12 @@ export default function CaptionsPage({ projectId = "", autoOpenFirst = false }) 
             });
             if (!response.ok) {
                 const detail = await response.text();
-                setError(detail || "Delete failed");
+                setError(detail || t("common.deleteFailed", "La suppression a échoué."));
                 return;
             }
             await refresh();
         } catch (err) {
-            globalThis.alert(err.message || "Delete failed");
+            globalThis.alert(err.message || t("common.deleteFailed", "La suppression a échoué."));
         } finally {
             setDeletingId("");
         }

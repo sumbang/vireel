@@ -12,7 +12,7 @@ import BillingIntervalToggle from "./BillingIntervalToggle";
 // `children` passed in, so no "Choisir"/checkout button ever renders here
 // -- this section only presents the offers and their details, it never
 // lets a logged-out visitor start a payment.
-export default function LandingPricingSection({ t }) {
+export default function LandingPricingSection({ t, language }) {
     const [plans, setPlans] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
@@ -78,7 +78,7 @@ export default function LandingPricingSection({ t }) {
                 ) : (
                     <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-8 items-start">
                         {plans.map((plan) => (
-                            <PlanCard key={plan.id || plan.name} plan={plan} billingInterval={billingInterval} t={t} />
+                            <PlanCard key={plan.id || plan.name} plan={plan} billingInterval={billingInterval} t={t} language={language} />
                         ))}
                     </div>
                 )}

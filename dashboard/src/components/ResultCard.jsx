@@ -803,7 +803,7 @@ export default function ResultCard({ clip, index, jobId, onPlay, onPause, compac
             <button
                 onClick={() => setShowAutoEditModal(true)}
                 disabled={isEditing || !hasClipContext || !hasAnyEditingCredit}
-                title="Auto Edit"
+                title={t("resultCard.autoEditTitle", "Auto Edit")}
                 className={`col-span-1 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-lg text-xs font-bold shadow-lg shadow-purple-500/20 transition-all active:scale-[0.98] flex items-center justify-center gap-2 mb-1 truncate px-1 ${compactActions ? 'min-h-[40px] flex-1' : ''}`}
             >
                 {isEditing ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
@@ -813,7 +813,7 @@ export default function ResultCard({ clip, index, jobId, onPlay, onPause, compac
             <button
                 onClick={() => setShowHookModal(true)}
                 disabled={isHooking || !hasClipContext || !hasAnyEditingCredit}
-                title="Viral Hook"
+                title={t("resultCard.viralHookTitle", "Viral Hook")}
                 className={`col-span-1 py-2 bg-gradient-to-r from-amber-400 to-yellow-500 hover:from-amber-300 hover:to-yellow-400 text-black rounded-lg text-xs font-bold shadow-lg shadow-yellow-500/20 transition-all active:scale-[0.98] flex items-center justify-center gap-2 mb-1 truncate px-1 ${compactActions ? 'min-h-[40px] flex-1' : ''}`}
             >
                 {isHooking ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}

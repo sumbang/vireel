@@ -1,23 +1,28 @@
-import { Check, MessageCircle, X } from "lucide-react";
+import { Check, MessageCircle, Share2, X } from "lucide-react";
 import { annualSavingsAmount, computeAnnualPrice, normalizeAnnualDiscountPercent } from "../lib/billing";
-import { resolvePlanColorStyle, resolvePlanIcon } from "../lib/abonnementDisplay";
+import { pickLocalizedPlanField, resolvePlanColorStyle, resolvePlanIcon } from "../lib/abonnementDisplay";
 
 // One plan's pricing card -- shared by AbonnementPage.jsx (authenticated
 // plan picker, which passes a "Choisir"/checkout button as `children`) and
 // LandingPricingSection.jsx (public landing page, which renders the card
 // with no `children` at all -- informational only, no payment action).
-export default function PlanCard({ plan, billingInterval, t, children }) {
+export default function PlanCard({ plan, billingInterval, t, language, children }) {
     const styles = resolvePlanColorStyle(plan);
     const Icon = resolvePlanIcon(plan);
     const commentCount = Number(plan.commentaire);
     const hasCommentCount = Number.isFinite(commentCount) && commentCount > 0;
+    const maxSocialAccounts = Number(plan.max_social_account);
+    const hasMaxSocialAccounts = Number.isFinite(maxSocialAccounts) && maxSocialAccounts > 0;
+    const cible = pickLocalizedPlanField(plan, "cible", language);
     // description is a JSON array (same shape as features), listed under
     // its own "Fonctionnalites IA incluses dans les credits" heading --
     // tolerate a plain string too in case a row hasn't been migrated to
     // the array shape yet.
-    const descriptionItems = Array.isArray(plan.description)
-        ? plan.description
-        : (plan.description ? [plan.description] : []);
+    const descriptionValue = pickLocalizedPlanField(plan, "description", language);
+    const descriptionItems = Array.isArray(descriptionValue)
+        ? descriptionValue
+        : (descriptionValue ? [descriptionValue] : []);
+    const featureItems = pickLocalizedPlanField(plan, "features", language) || [];
     const discountRate = normalizeAnnualDiscountPercent(plan.reduction_annuelle);
     const displayedPrice = billingInterval === "year"
         ? computeAnnualPrice(plan.price, discountRate)
@@ -45,9 +50,9 @@ export default function PlanCard({ plan, billingInterval, t, children }) {
             </div>
 
             {/* Cible */}
-            {plan.cible && (
+            {cible && (
                 <p className={`lowercase text-[0.65rem] font-medium mb-3 ${styles.icon}`}>
-                    {plan.cible}
+                    {cible}
                 </p>
             )}
 
@@ -87,6 +92,18 @@ export default function PlanCard({ plan, billingInterval, t, children }) {
                         <span>{commentCount.toLocaleString()} {t("abonnement.commentsPerPost", "commentaires / publication")}</span>
                     </li>
                 )}
+                {hasMaxSocialAccounts && (
+                    <li className="flex items-start gap-2 text-sm text-slate-700 dark:text-zinc-300">
+                        <Share2 size={16} className={`${styles.check} mt-0.5 shrink-0`} />
+                        <span>
+                            {t(
+                                "abonnement.maxSocialAccounts",
+                                "Jusqu'à {{count}} compte(s) par réseau social",
+                                { count: maxSocialAccounts.toLocaleString() }
+                            )}
+                        </span>
+                    </li>
+                )}
                 <li className="flex items-start gap-2 text-sm text-slate-700 dark:text-zinc-300">
                     {plan.statistique ? (
                         <>
@@ -100,7 +117,7 @@ export default function PlanCard({ plan, billingInterval, t, children }) {
                         </>
                     )}
                 </li>
-                {(plan.features || []).map((feature) => (
+                {featureItems.map((feature) => (
                     <li key={feature} className="flex items-start gap-2 text-sm text-slate-700 dark:text-zinc-300">
                         <Check size={16} className={`${styles.check} mt-0.5 shrink-0`} />
                         <span>{feature}</span>

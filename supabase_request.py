@@ -3222,6 +3222,43 @@ async def mark_media_asset_expired(media_id: str) -> bool:
 	return bool(response.data)
 
 
+async def extend_media_asset_retention(
+	media_id: str,
+	retention_days: int,
+	retention_started_at: datetime,
+	retention_expires_at: datetime,
+) -> bool:
+	"""Pushes an AVAILABLE media asset's retention window out again because
+	its owner still has an active subscription at the moment this
+	(possibly already-extended) deadline was reached -- see
+	_maybe_extend_media_asset_retention in app.py, which re-checks this on
+	every sweep pass a row's retention_expires_at comes due, so the window
+	keeps renewing for as long as the subscription stays active. Also
+	clears notified_before_expiry_at: the "expiring soon" notification
+	sweep (list_produced_media_due_for_notification) only ever fires once
+	per retention_expires_at value, and a new deadline deserves its own
+	notification rather than staying silently suppressed by one already
+	sent for the deadline this just replaced. Scoped to media_status=
+	AVAILABLE so a row a concurrent sweep pass already expired/deleted is
+	left untouched."""
+	if not media_id:
+		return False
+	client = await get_client()
+	response = (
+		await client.table(SUPABASE_MEDIA_ASSETS_TABLE)
+		.update({
+			"retention_days": int(retention_days),
+			"retention_started_at": retention_started_at.isoformat(),
+			"retention_expires_at": retention_expires_at.isoformat(),
+			"notified_before_expiry_at": None,
+		})
+		.eq("id", media_id)
+		.eq("media_status", MEDIA_STATUS_AVAILABLE)
+		.execute()
+	)
+	return bool(response.data)
+
+
 async def mark_media_asset_missing(media_id: str) -> bool:
 	"""The object should be there but S3 can't find/reach it -- distinct
 	from EXPIRED (deleted by our own retention sweep) and DELETED (deleted

@@ -134,7 +134,7 @@ def _import_app_with_stubs(monkeypatch):
         "insert_notification", "list_notifications", "mark_notification_read",
         "mark_all_notifications_read", "insert_media_asset",
         "get_media_asset_by_content", "list_media_assets_due_for_expiration",
-        "mark_media_asset_expired", "mark_media_asset_deleted",
+        "mark_media_asset_expired", "extend_media_asset_retention", "mark_media_asset_deleted",
         "list_produced_media_due_for_notification",
         "list_media_assets_by_content_ids", "mark_media_asset_notified"]:
         setattr(supabase_request_mod, func_name, MagicMock(return_value=None) if "get" not in func_name else AsyncMock(return_value=None))

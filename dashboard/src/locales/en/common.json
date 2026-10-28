@@ -229,7 +229,8 @@
     "selectFacebookPage": "Select a Facebook page to connect:",
     "socialLimitReached": "Your plan's limit for this network has been reached.",
     "user": "User",
-    "buyCreditsTitle": "Top up credits"
+    "buyCreditsTitle": "Top up credits",
+    "socialAccountsRequireSubscription": "An active subscription is required to connect social accounts."
   },
   "reels": {
     "title": "Generated Reels",

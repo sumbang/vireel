@@ -8,10 +8,12 @@ keeps a media file in S3, and what that costs, so those two concerns live
 here as the single source of truth:
 
   - how long a media file is retained, by media type (source vs produced)
-    and by whether the owning user had an active subscription at the
-    moment the media was created (see resolve_retention_days) -- never
-    recomputed later from a live subscription lookup, see app.py's
-    _finalize_media_retention_billing;
+    and by whether its owner currently has an active subscription (see
+    resolve_retention_days) -- set at creation (app.py's
+    _finalize_media_retention_billing) and re-evaluated every time the
+    resulting deadline comes due (app.py's
+    _maybe_extend_media_asset_retention), so an active subscription at
+    that moment extends it again rather than letting the file expire;
   - what Vireel's own internal S3 storage cost is, per GB per day
     (S3_STORAGE_COST_PER_GB_DAY), used by billing.py to add a retention
     cost component to a job's existing credit cost.
@@ -124,11 +126,14 @@ MEDIA_TYPES = (MEDIA_TYPE_SOURCE, MEDIA_TYPE_PRODUCED)
 
 
 def resolve_retention_days(media_type: str, has_active_subscription: bool) -> int:
-    """The single place that turns (media_type, subscription status at
-    creation time) into a number of days -- called exactly once, at media
-    creation (see app.py's _finalize_media_retention_billing), and the
-    result is stored on the media_assets row forever after. Never called
-    again later to "recompute" an already-created media's retention."""
+    """The single place that turns (media_type, current subscription
+    status) into a number of days. Called at media creation (see app.py's
+    _finalize_media_retention_billing) to set the initial deadline, and
+    again every time that deadline comes due (see app.py's
+    _maybe_extend_media_asset_retention, called with
+    has_active_subscription=True since by construction it only runs when
+    the owner currently has one) to decide whether to push it out again
+    instead of expiring the file."""
     if media_type == MEDIA_TYPE_SOURCE:
         return RETENTION_SUBSCRIBER_SOURCE_DAYS if has_active_subscription else RETENTION_FREE_SOURCE_DAYS
     if media_type == MEDIA_TYPE_PRODUCED:

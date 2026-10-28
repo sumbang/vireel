@@ -229,7 +229,8 @@
     "selectFacebookPage": "Sélectionnez une page Facebook à connecter :",
     "socialLimitReached": "Limite de votre offre atteinte pour ce réseau.",
     "user": "Utilisateur",
-    "buyCreditsTitle": "Recharger des crédits"
+    "buyCreditsTitle": "Recharger des crédits",
+    "socialAccountsRequireSubscription": "Un abonnement actif est requis pour connecter des comptes sociaux."
   },
   "reels": {
     "title": "Réels générés",

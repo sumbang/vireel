@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Activity, AlertCircle, ArrowLeft, CheckCircle2, Clock3, Loader2 } from "lucide-react";
+import { Activity, AlertCircle, CheckCircle2, Clock3, Loader2 } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { getApiUrl } from "../config";
 import { getAuthHeaders } from "../lib/apiAuth";
@@ -7,6 +7,7 @@ import { useAuth } from "../state/AuthContext";
 import { useUserCredits } from "../state/UserCreditsContext";
 import { useTranslation } from "../state/LanguageContext";
 import MediaInput from "../components/MediaInput";
+import Breadcrumbs from "../components/Breadcrumbs";
 import {
     buildAnonymousStoryProcessSteps,
     errorMessageForCode,
@@ -267,18 +268,18 @@ export default function AnonymousStoryCreatePage() {
     return (
         <div className="flex-1 overflow-y-auto p-8 space-y-6">
             <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                <div>
+                <div className="space-y-2">
+                    <Breadcrumbs
+                        items={[
+                            { label: t("breadcrumbs.dashboard", "Dashboard"), href: "/dashboard" },
+                            { label: t("breadcrumbs.anonymousStories", "Anonymous stories"), href: "/dashboard/anonymous-stories" },
+                            { label: t("breadcrumbs.create", "Create") },
+                        ]}
+                        ariaLabel={t('breadcrumbs.ariaLabel', 'Breadcrumb')}
+                    />
                     <h1 className="text-3xl font-black tracking-tight">{t("anonymousStories.createTitle", "Générer une histoire")}</h1>
                     <p className="mt-2 text-sm text-slate-500 dark:text-zinc-400">{t("anonymousStories.createSubtitle", "Importe une video ou colle un lien YouTube.")}</p>
                 </div>
-                <button
-                    type="button"
-                    onClick={() => navigate("/dashboard/anonymous-stories")}
-                    className="inline-flex items-center gap-2 rounded-xl border border-slate-300 dark:border-white/10 bg-slate-100 dark:bg-white/5 px-4 py-2.5 text-sm font-medium text-slate-800 dark:text-zinc-200 shadow-sm hover:bg-slate-200 dark:hover:bg-white/10"
-                >
-                    <ArrowLeft size={14} />
-                    {t("anonymousStories.backToList", "Retour aux histoires anonymes")}
-                </button>
             </div>
 
             {!jobId && !projectIdFromUrl ? (

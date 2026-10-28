@@ -15,8 +15,8 @@
 -- nullable and must be filled in per plan afterwards, e.g.:
 --   update public.abonnement set
 --     cible_en = '...',
---     description_en = '["...", "..."]'::jsonb,
---     features_en = '["...", "..."]'::jsonb
+--     description_en = '["...", "..."]'::text,
+--     features_en = '["...", "..."]'::text
 --   where name ilike '%silver%';
 --
 -- Until filled in, the frontend falls back to the French column for that
@@ -25,5 +25,5 @@
 -- never sees a blank card while the catalog is being translated.
 alter table if exists public.abonnement
   add column if not exists cible_en text,
-  add column if not exists description_en jsonb,
-  add column if not exists features_en jsonb;
+  add column if not exists description_en text,
+  add column if not exists features_en text[];

@@ -5548,6 +5548,31 @@ def test_create_stripe_checkout_session_uses_subscription_mode(monkeypatch):
     assert kwargs["metadata"]["userid"] == "u1"
     assert kwargs["customer_email"] == "user@example.com"
     assert "customer" not in kwargs
+    # Managed Payments defaults off so Stripe never adds tax on top of
+    # the plan's listed price (see STRIPE_MANAGED_PAYMENTS_ENABLED).
+    assert kwargs["managed_payments"] == {"enabled": False}
+
+
+def test_create_stripe_checkout_session_enables_managed_payments_when_configured(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+    fake_stripe = MagicMock()
+    fake_session = MagicMock(url="https://checkout.stripe.com/pay/cs_test_mp", id="cs_test_mp")
+    fake_stripe.checkout.Session.create.return_value = fake_session
+    monkeypatch.setattr(app, "stripe", fake_stripe)
+    monkeypatch.setattr(app, "STRIPE_SECRET_KEY", "sk_test_123")
+    monkeypatch.setattr(app, "STRIPE_MANAGED_PAYMENTS_ENABLED", True)
+    monkeypatch.setattr(app, "is_supabase_configured", lambda: True)
+    monkeypatch.setattr(app, "supabase_get_abonnement", AsyncMock(return_value={"id": "plan-1", "name": "Pro", "price": 29.99}))
+    monkeypatch.setattr(app, "supabase_get_latest_user_paid_subscription", AsyncMock(return_value=None))
+
+    payload = app.StripeCheckoutRequest(plan_id="plan-1")
+    asyncio.run(app.create_stripe_checkout_session(
+        request=_FakeCheckoutRequest(headers={"X-User-Email": "user@example.com"}),
+        payload=payload, user_id="u1",
+    ))
+
+    _, kwargs = fake_stripe.checkout.Session.create.call_args
+    assert kwargs["managed_payments"] == {"enabled": True}
 
 
 def test_create_stripe_checkout_session_reuses_existing_stripe_customer(monkeypatch):
@@ -5664,6 +5689,7 @@ def test_buy_credits_checkout_reuses_existing_stripe_customer(monkeypatch):
     _, kwargs = fake_stripe.checkout.Session.create.call_args
     assert kwargs["customer"] == "cus_existing"
     assert "customer_email" not in kwargs
+    assert kwargs["managed_payments"] == {"enabled": False}
     assert kwargs["payment_intent_data"] == {"setup_future_usage": "off_session"}
 
 

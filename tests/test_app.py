@@ -5938,6 +5938,24 @@ def test_stripe_webhook_dispatches_payment_failed_invoice(monkeypatch):
     failed_mock.assert_awaited_once_with(invoice)
 
 
+def test_stripe_webhook_dispatches_subscription_deleted(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+    monkeypatch.setattr(app, "STRIPE_WEBHOOK_SECRET", "whsec_test")
+    monkeypatch.setattr(app, "is_supabase_configured", lambda: True)
+    monkeypatch.setattr(app, "stripe", MagicMock())
+    monkeypatch.setattr(app, "STRIPE_SECRET_KEY", "sk_test_123")
+    subscription = types.SimpleNamespace()
+    fake_event = types.SimpleNamespace(type="customer.subscription.deleted", data=types.SimpleNamespace(object=subscription))
+    monkeypatch.setattr(app, "_verify_and_parse_event", lambda payload, signature: fake_event)
+    deleted_mock = AsyncMock(return_value={"received": True})
+    monkeypatch.setattr(app, "_handle_subscription_deleted", deleted_mock)
+
+    result = asyncio.run(app.stripe_webhook(_FakeWebhookRequest()))
+
+    assert result == {"received": True}
+    deleted_mock.assert_awaited_once_with(subscription)
+
+
 def test_stripe_webhook_dispatches_setup_session_to_payment_method_handler(monkeypatch):
     app = _import_app_with_stubs(monkeypatch)
     monkeypatch.setattr(app, "STRIPE_WEBHOOK_SECRET", "whsec_test")
@@ -6596,6 +6614,35 @@ def test_handle_subscription_payment_failed_ignores_invoice_without_subscription
     result = asyncio.run(app._handle_subscription_payment_failed(invoice))
 
     assert result == {"received": True, "ignored": "no_subscription_on_invoice"}
+
+
+def test_handle_subscription_deleted_disconnects_social_accounts(monkeypatch):
+    # Voluntary cancellation (cancel_at_period_end) reaching its actual
+    # end date with no renewal attempted at all -- the counterpart to
+    # _handle_subscription_payment_failed's final-attempt branch.
+    app = _import_app_with_stubs(monkeypatch)
+    delete_accounts_mock = AsyncMock(return_value=3)
+    monkeypatch.setattr(app, "_delete_all_social_accounts_for_user", delete_accounts_mock)
+    subscription = types.SimpleNamespace(
+        id="sub_123", metadata=_FakeStripeMetadata({"userid": "u1"}),
+    )
+
+    result = asyncio.run(app._handle_subscription_deleted(subscription))
+
+    assert result == {"received": True}
+    delete_accounts_mock.assert_awaited_once_with("u1")
+
+
+def test_handle_subscription_deleted_ignores_missing_userid(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+    delete_accounts_mock = AsyncMock()
+    monkeypatch.setattr(app, "_delete_all_social_accounts_for_user", delete_accounts_mock)
+    subscription = types.SimpleNamespace(id="sub_123", metadata=_FakeStripeMetadata({}))
+
+    result = asyncio.run(app._handle_subscription_deleted(subscription))
+
+    assert result == {"received": True, "ignored": "no_userid_in_metadata"}
+    delete_accounts_mock.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

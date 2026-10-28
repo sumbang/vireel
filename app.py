@@ -10635,6 +10635,33 @@ async def _handle_subscription_payment_failed(invoice: "stripe.Invoice") -> dict
     return {"received": True}
 
 
+async def _handle_subscription_deleted(subscription: "stripe.Subscription") -> dict:
+    """Fires when a subscription set to cancel_at_period_end=True (see
+    cancel_souscription) actually ends at its period boundary with no
+    renewal ever attempted -- the voluntary-cancellation counterpart to
+    _handle_subscription_payment_failed's final-attempt branch, which
+    covers a renewal charge that WAS attempted and exhausted Stripe's
+    retries. Disconnects every social account the user had connected,
+    same as that other lapse path. No credit-zeroing step is needed
+    here: payment_end_date was never extended (no invoice.paid fired for
+    this period), so get_user_abonnement already treats the subscription
+    as inactive, and the existing retention-policy grace period
+    (_enforce_subscription_retention_policy) handles zeroing the
+    credit/storage balance on its own schedule, same as any other lapse."""
+    metadata = subscription.metadata.to_dict() if subscription.metadata else {}
+    user_id = metadata.get("userid")
+    if not user_id:
+        return {"received": True, "ignored": "no_userid_in_metadata"}
+
+    deleted_count = await _delete_all_social_accounts_for_user(user_id)
+    if deleted_count:
+        logger.info(
+            "Disconnected %d social account(s) for user %s after subscription %s ended without renewal",
+            deleted_count, user_id, subscription.id,
+        )
+    return {"received": True}
+
+
 async def _handle_charge_refund_or_dispute(stripe_object: Any, reason: str) -> dict:
     """A refund or chargeback landing on the exact charge that funded a
     subscription payment -- revoke whatever's still available in any
@@ -10665,8 +10692,14 @@ async def _handle_charge_refund_or_dispute(stripe_object: Any, reason: str) -> d
 async def stripe_webhook(request: Request):
     """Handle Stripe checkout.session.completed (new purchase/subscription),
     invoice.paid (automatic subscription renewal), invoice.payment_failed
-    (failed automatic renewal charge), charge.refunded and
-    charge.dispute.created (referral-reward clawback) events."""
+    (failed automatic renewal charge), customer.subscription.deleted (a
+    cancel_at_period_end subscription actually ending with no renewal
+    attempted), charge.refunded and charge.dispute.created
+    (referral-reward clawback) events. customer.subscription.deleted
+    must be added to the webhook endpoint's subscribed events in the
+    Stripe Dashboard for voluntary-cancellation social-account cleanup
+    (_handle_subscription_deleted) to ever fire -- every other event
+    here was already required before that."""
     _require_stripe_ready()
     if not STRIPE_WEBHOOK_SECRET:
         raise HTTPException(status_code=503, detail="Stripe webhook secret is not configured")
@@ -10696,6 +10729,9 @@ async def stripe_webhook(request: Request):
 
     if event.type == "invoice.payment_failed":
         return await _handle_subscription_payment_failed(event.data.object)
+
+    if event.type == "customer.subscription.deleted":
+        return await _handle_subscription_deleted(event.data.object)
 
     if event.type == "charge.refunded":
         return await _handle_charge_refund_or_dispute(event.data.object, "refund")
@@ -10862,7 +10898,11 @@ def _format_iso_date_fr(iso_value: Optional[str]) -> str:
 async def cancel_souscription(user_id: Annotated[str, Depends(get_user_id_header)], request: Request = None):
     """Stop the subscription from auto-renewing -- access continues until
     the current period's payment_end_date, matching Stripe's own
-    cancel_at_period_end semantics (no refund, no early cutoff)."""
+    cancel_at_period_end semantics (no refund, no early cutoff). Once
+    that period actually ends with no renewal, Stripe's own
+    customer.subscription.deleted webhook event
+    (_handle_subscription_deleted) disconnects every social account the
+    user had connected."""
     _require_stripe_ready()
     if not is_supabase_configured():
         raise HTTPException(status_code=503, detail=_SUPABASE_NOT_CONFIGURED)

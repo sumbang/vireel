@@ -9830,6 +9830,11 @@ def test_get_user_credits_reports_has_analytics_access(monkeypatch):
     assert resp.json()["has_analytics_access"] is False
 
     monkeypatch.setattr(app, "get_user_abonnement", AsyncMock(return_value=None))
+    # _enforce_subscription_retention_policy (called by get_user_credits
+    # before reading the plan) falls through to this lookup once
+    # get_user_abonnement is None -- must be mocked too or it hits a real
+    # (unconfigured) Supabase client.
+    monkeypatch.setattr(app, "supabase_get_latest_user_paid_subscription", AsyncMock(return_value=None))
 
     with TestClient(app.app) as client:
         resp = client.get("/api/user/credits", headers=_auth_headers("u1"))

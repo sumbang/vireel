@@ -9806,9 +9806,9 @@ def test_assert_user_can_access_analytics_allows_gold_plan(monkeypatch):
 
 
 def test_get_user_credits_reports_has_analytics_access(monkeypatch):
-    # Analytics access depends only on having an active subscription --
-    # the plan's tier (priorite) no longer gates it: Silver (priorite=1)
-    # grants it just like Ultimate (priorite=3).
+    # Analytics access requires BOTH an active subscription AND a plan
+    # tier of priorite >= 2 -- Silver (priorite=1) does not qualify even
+    # though its subscription is active.
     app = _import_app_with_stubs(monkeypatch)
     monkeypatch.setattr(app, "is_supabase_configured", lambda: True)
     monkeypatch.setattr(app, "get_user_abonnement", AsyncMock(return_value={"priorite": 3, "abonnement": "ultimate-plan"}))
@@ -9827,7 +9827,7 @@ def test_get_user_credits_reports_has_analytics_access(monkeypatch):
         resp = client.get("/api/user/credits", headers=_auth_headers("u1"))
 
     assert resp.status_code == 200
-    assert resp.json()["has_analytics_access"] is True
+    assert resp.json()["has_analytics_access"] is False
 
     monkeypatch.setattr(app, "get_user_abonnement", AsyncMock(return_value=None))
 

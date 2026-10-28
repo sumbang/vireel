@@ -12041,7 +12041,7 @@ async def get_user_credits(request: Request, user_id: Annotated[str, Depends(get
             **bonus_summary,
             "has_credits": (promotional_credit + purchased_credit) > 0,
             "has_active_subscription": has_active_subscription,
-            "has_analytics_access": has_active_subscription,
+            "has_analytics_access": has_active_subscription and int((abonnement or {}).get("priorite") or 1) >= 2,
             "abo_costs": {
                 "credit":  0.0,
             },
@@ -12070,7 +12070,7 @@ async def get_user_credits(request: Request, user_id: Annotated[str, Depends(get
         **bonus_summary,
         "has_credits": (credit + promotional_credit + purchased_credit) > 0,
         "has_active_subscription": has_active_subscription,
-        "has_analytics_access": has_active_subscription,
+        "has_analytics_access": has_active_subscription and int((abonnement or {}).get("priorite") or 1) >= 2,
         "abo_costs": abo_costs,
         "default_costs": {
             "reel":        DEFAULT_REEL_CREDITS,

@@ -20,6 +20,23 @@ const OAUTH_MESSAGE_ORIGIN = API_BASE_URL
   ? new URL(API_BASE_URL, window.location.origin).origin
   : window.location.origin;
 
+// Some OAuth providers (Facebook/Meta's own login pages, observed in
+// production) set Cross-Origin-Opener-Policy on their pages, which
+// permanently severs this popup's `window.opener` reference once the
+// popup navigates through them -- even once it navigates back to our own
+// callback page afterwards. When that happens, the callback page's
+// `window.opener.postMessage(...)` (see _oauth_popup_response in app.py)
+// silently does nothing: the popup still closes normally (so the flow
+// LOOKS like it completed), but this tab never receives the result. For
+// Facebook specifically that's the only path that finalizes the
+// connection (the page-selection round trip below), so the account simply
+// never gets connected, with no error anywhere. localStorage is a
+// same-origin storage API, unrelated to the opener relationship, so the
+// callback page also writes the result there; the "storage" event below
+// fires in this tab regardless of window.opener's state, as a reliable
+// fallback alongside postMessage.
+const OAUTH_RESULT_STORAGE_KEY = 'vireel_oauth_result';
+
 const SOCIAL_NETWORKS = [
   {
     id: 'linkedin',
@@ -845,20 +862,57 @@ export default function SettingsPage() {
       const popup = window.open(authUrl, 'oauth', 'width=600,height=700');
       if (!popup) throw new Error('Popup blocked by browser');
 
+      // Clear out any leftover result from a previous attempt so it can't
+      // be mistaken for this one's.
+      try { window.localStorage.removeItem(OAUTH_RESULT_STORAGE_KEY); } catch { /* ignore */ }
+
       await new Promise((resolve, reject) => {
-        const timeoutId = window.setTimeout(() => {
+        let settled = false;
+        let handled = false;
+
+        const finish = (fn, arg) => {
+          if (settled) return;
+          settled = true;
+          window.clearInterval(closePoll);
+          window.clearTimeout(timeoutId);
           window.removeEventListener('message', handleMessage);
-          reject(new Error('OAuth timeout'));
+          window.removeEventListener('storage', handleStorage);
+          fn(arg);
+        };
+
+        const timeoutId = window.setTimeout(() => {
+          finish(reject, new Error('OAuth timeout'));
         }, 180000);
 
         const closePoll = window.setInterval(() => {
           if (popup.closed) {
-            window.clearInterval(closePoll);
-            window.clearTimeout(timeoutId);
-            window.removeEventListener('message', handleMessage);
-            resolve();
+            finish(resolve);
           }
         }, 500);
+
+        // Shared by both delivery paths below (postMessage and the
+        // localStorage/"storage" event fallback) so a result is only ever
+        // acted on once, however it arrives.
+        function processPayload(data) {
+            if (handled || !data || data.platform !== platform) return;
+            handled = true;
+
+            if (data.type === 'oauth_page_selection') {
+                finalizeFacebookPageSelection(data)
+                    .then(() => finish(resolve))
+                    .catch((error) => finish(reject, error));
+                return;
+            }
+            if (data.type === 'oauth_success') {
+                finish(resolve);
+                return;
+            }
+            if (data.type === 'oauth_error') {
+                finish(reject, new Error(data.message || `OAuth failed for ${platform}`));
+                return;
+            }
+            handled = false;
+        }
 
         function handleMessage(event) {
           // Security: the OAuth callback page that posts this message is
@@ -868,35 +922,23 @@ export default function SettingsPage() {
           // redirect within it) could postMessage a spoofed
           // oauth_success/oauth_page_selection payload into this handler.
           if (event.origin !== OAUTH_MESSAGE_ORIGIN) return;
-          const data = event.data || {};
-          if (data.platform !== platform) return;
+          processPayload(event.data || {});
+        }
 
-          if (data.type === 'oauth_page_selection') {
-            window.clearInterval(closePoll);
-            window.clearTimeout(timeoutId);
-            window.removeEventListener('message', handleMessage);
-
-            finalizeFacebookPageSelection(data)
-              .then(() => resolve())
-              .catch((error) => reject(error));
+        function handleStorage(event) {
+          if (event.key !== OAUTH_RESULT_STORAGE_KEY || !event.newValue) return;
+          let data;
+          try {
+            data = JSON.parse(event.newValue);
+          } catch {
             return;
           }
-
-          if (data.type === 'oauth_success') {
-            window.clearInterval(closePoll);
-            window.clearTimeout(timeoutId);
-            window.removeEventListener('message', handleMessage);
-            resolve();
-          }
-          if (data.type === 'oauth_error') {
-            window.clearInterval(closePoll);
-            window.clearTimeout(timeoutId);
-            window.removeEventListener('message', handleMessage);
-            reject(new Error(data.message || `OAuth failed for ${platform}`));
-          }
+          try { window.localStorage.removeItem(OAUTH_RESULT_STORAGE_KEY); } catch { /* ignore */ }
+          processPayload(data);
         }
 
         window.addEventListener('message', handleMessage);
+        window.addEventListener('storage', handleStorage);
       });
 
       await refreshConnectedAccounts();

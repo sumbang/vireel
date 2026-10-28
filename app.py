@@ -16476,7 +16476,21 @@ def _oauth_popup_response(
     return HTMLResponse(
         f"""
         <script>
-          window.opener && window.opener.postMessage({json.dumps(payload)}, {json.dumps(FRONTEND_ORIGIN)});
+          var payload = {json.dumps(payload)};
+          // Some OAuth providers (Facebook/Meta's own login pages,
+          // observed in production) set Cross-Origin-Opener-Policy on
+          // their pages, which permanently severs this popup's
+          // window.opener reference once it navigates through them --
+          // even once it navigates back here, to our own same-origin
+          // callback page. When that happens, postMessage below silently
+          // does nothing and the opener tab never learns the result.
+          // localStorage is a same-origin storage API, unrelated to the
+          // opener relationship, so writing the result there too fires a
+          // "storage" event in the opener tab regardless of
+          // window.opener's state -- see the matching handleStorage
+          // listener in Settings.jsx's connectPlatform.
+          try {{ localStorage.setItem('vireel_oauth_result', JSON.stringify(payload)); }} catch (e) {{}}
+          window.opener && window.opener.postMessage(payload, {json.dumps(FRONTEND_ORIGIN)});
           window.close();
         </script>
         """

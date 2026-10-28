@@ -8,15 +8,15 @@
 -- pre-existing untracked "features" column) and keep that role --
 -- nothing here renames or repurposes them.
 --
--- description_en/features_en mirror their French counterparts' current
--- jsonb-array shape. cible_en stays plain text like cible.
+-- description_en is plain text like description; features_en is a
+-- Postgres text[] like features. cible_en stays plain text like cible.
 --
 -- No safe default exists for this marketing copy either -- added
 -- nullable and must be filled in per plan afterwards, e.g.:
 --   update public.abonnement set
 --     cible_en = '...',
---     description_en = '["...", "..."]'::text,
---     features_en = '["...", "..."]'::text
+--     description_en = '...',
+--     features_en = array['...', '...']
 --   where name ilike '%silver%';
 --
 -- Until filled in, the frontend falls back to the French column for that

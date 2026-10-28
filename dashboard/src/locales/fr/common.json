@@ -53,7 +53,8 @@
     "saturation": "Saturation",
     "removeSilence": "Retirer les silences",
     "cleanAudio": "Nettoyer l'audio",
-    "removeBadTakes": "Retirer les mauvaises prises"
+    "removeBadTakes": "Retirer les mauvaises prises",
+    "customReelButton": "Reel personnalisé"
   },
   "demoAccess": {
     "title": "Environnement réservé",
@@ -206,7 +207,29 @@
       "plan_change_requires_recurring_subscription": "Cette action nécessite un abonnement récurrent.",
       "plan_change_subscription_cancelled": "Cet abonnement est annulé et ne peut plus changer de formule.",
       "no_scheduled_change": "Aucun changement programmé à annuler."
-    }
+    },
+    "addCard": "Ajouter une carte",
+    "connectAnother": "Connecter",
+    "currentPlan": "Offre actuelle",
+    "deleteConnection": "Supprimer la connexion",
+    "facebookConnectFailed": "Impossible de connecter la page Facebook sélectionnée.",
+    "facebookPagesMissing": "Aucune page Facebook disponible pour la sélection.",
+    "facebookSelectionCanceled": "Sélection de la page Facebook annulée.",
+    "invalidFacebookPageSelection": "Sélection de page Facebook invalide.",
+    "loadingPaymentMethod": "Chargement de la carte...",
+    "logout": "Se déconnecter",
+    "noPaymentMethod": "Aucune carte enregistrée",
+    "paymentMethod": "Moyen de paiement",
+    "paymentMethodError": "Action impossible sur la carte.",
+    "paymentMethodReplaced": "Votre carte a été mise à jour.",
+    "paymentMethodRevoked": "Votre carte a été supprimée.",
+    "reauthorize": "Réautoriser la connexion",
+    "replaceCard": "Remplacer",
+    "revokeCard": "Supprimer",
+    "selectFacebookPage": "Sélectionnez une page Facebook à connecter :",
+    "socialLimitReached": "Limite de votre offre atteinte pour ce réseau.",
+    "user": "Utilisateur",
+    "buyCreditsTitle": "Recharger des crédits"
   },
   "reels": {
     "title": "Réels générés",
@@ -262,7 +285,11 @@
     "videoScan": "Scan de la vidéo",
     "scheduleWeek": "Planifier la semaine",
     "readyReels": "réel(s) sont prêts. Tu peux les télécharger, les modifier ou lancer une nouvelle opération.",
-    "reelGenerationFailed": "La génération a échoué. Rouvre les détails pour vérifier l’avancement et relancer une opération."
+    "reelGenerationFailed": "La génération a échoué. Rouvre les détails pour vérifier l’avancement et relancer une opération.",
+    "postedSuccessfully": "Publié avec succès !",
+    "progress": "Progression",
+    "scheduledSuccessfully": "Programmé avec succès !",
+    "shareDisabledNoSubscription": "Un abonnement actif est requis pour publier."
   },
   "generatedMedia": {
     "startAction": "Démarrer une action",
@@ -287,7 +314,8 @@
     "untitled": "Sans titre",
     "previewLabel": "Prévisualisation",
     "noDescription": "Aucune description.",
-    "unknownDuration": "Durée inconnue"
+    "unknownDuration": "Durée inconnue",
+    "noPreview": "Aucun aperçu disponible."
   },
   "thumbnailStudio": {
     "title": "IA Captions",
@@ -398,7 +426,12 @@
     "histoires": "Mes histoires",
     "resume": "Mes résumés de films",
     "page-des": "Organisez vos opérations sans changer vos actions habituelles",
-    "subtitlesdesc": "Upload local uniquement puis generation via la file de jobs."
+    "subtitlesdesc": "Upload local uniquement puis generation via la file de jobs.",
+    "back": "Retour",
+    "close": "Fermer",
+    "loading": "Chargement...",
+    "noItemsFound": "Aucun élément trouvé",
+    "or": "ou"
   },
   "captionsModal": {
     "title": "Éditeur de captions",
@@ -475,7 +508,26 @@
     "generating": "Génération...",
     "generate": "Générer les captions",
     "generateSubtitles": "Generer les sous-titres",
-    "textColor": "Couleur du texte"
+    "textColor": "Couleur du texte",
+    "builtinThemes": "Thèmes prêts à l'emploi",
+    "deleteTheme": "Supprimer ce thème",
+    "myThemes": "Mes thèmes",
+    "noCustomThemes": "Personnalisez un thème puis enregistrez-le ici.",
+    "resetVideo": "Réinitialiser",
+    "save": "Enregistrer",
+    "saveAsNewThemeHint": "Enregistrer le style actuel comme nouveau thème",
+    "saveTheme": "Enregistrer le style actuel comme thème",
+    "saveThemeHint": "Astuce : réutilisez le nom d'un thème existant pour le mettre à jour.",
+    "setAsDefault": "Définir comme style par défaut",
+    "setDefaultFailed": "Échec de la mise à jour du style par défaut.",
+    "setDefaultSuccess": "Ce style est maintenant le style par défaut.",
+    "themeNamePlaceholder": "Nom du thème",
+    "themeSaveFailed": "Échec de l'enregistrement du thème.",
+    "themeSaved": "Thème enregistré.",
+    "themes": "Thèmes",
+    "themesLoadFailed": "Impossible de charger vos thèmes.",
+    "updateTheme": "Enregistrer ({{name}})",
+    "updateThemeHint": "Met à jour le thème \"{{name}}\" avec le style actuel"
   },
   "hookModal": {
     "title": "Hook viral",
@@ -611,7 +663,35 @@
     "anonymousStoryGenerator": "Générer une histoire",
     "anonymousStoryGeneratorSubtitle": "Transforme une vidéo témoignage en histoire écrite anonymisée, prête à publier.",
     "filmSummaryGenerator": "Générer un résumé de film",
-    "filmSummaryGeneratorSubtitle": "Transforme une vidéo témoignage en histoire écrite anonymisée, prête à publier.."
+    "filmSummaryGeneratorSubtitle": "Transforme une vidéo témoignage en histoire écrite anonymisée, prête à publier..",
+    "analyticsAccountError": "Impossible de récupérer les statistiques (reconnectez ce compte dans Paramètres).",
+    "analyticsAccountsError": "Impossible de charger les comptes sociaux.",
+    "analyticsComingSoon": "Bientôt disponible, en cours de développement",
+    "analyticsEyebrow": "Réseaux sociaux",
+    "analyticsLastSynced": "Mis à jour {time}",
+    "analyticsNoAccount": "Connectez un réseau social dans Paramètres pour voir vos analyses.",
+    "analyticsRefresh": "Actualiser",
+    "analyticsRefreshCooldown": "Disponible dans {s}s",
+    "analyticsRefreshFailed": "Actualisation impossible.",
+    "analyticsTitle": "Analyses des réseaux sociaux",
+    "chartActivity": "Activité par type de contenu",
+    "chartCredits": "Crédits consommés",
+    "chartPublicationsByPlatform": "Publications par plateforme",
+    "monetizationAdCpm": "CPM publicitaire moyen",
+    "monetizationAdEarnings": "Revenus publicitaires estimés",
+    "monetizationAdImpressions": "Impressions publicitaires",
+    "monetizationUnavailable": "Données de monétisation non disponibles pour ce compte.",
+    "publications": "Publications",
+    "statAnonymousStories": "Histoires anonymes",
+    "statCaptions": "Sous-titres",
+    "statCreditsConsumed": "Crédits consommés",
+    "statFilmSummaries": "Résumés de film",
+    "statPublicationsDone": "Publications réussies",
+    "statReels": "Reels",
+    "statsEmpty": "Aucune donnée sur cette période.",
+    "statsError": "Impossible de charger les statistiques.",
+    "statsEyebrow": "Vue d'ensemble",
+    "statsTitle": "Statistiques"
   },
   "social": {
     "socialPublications": "Publications sociales",
@@ -666,7 +746,20 @@
     "postComposerCommentN": "Commentaire {{n}}",
     "postComposerCommentTextPlaceholder": "Texte du commentaire, collez un lien ou ajoutez des #hashtags...",
     "postComposerCommentImagePlaceholder": "Collez l'URL de l'image...",
-    "postComposerAddImage": "Ajouter une image"
+    "postComposerAddImage": "Ajouter une image",
+    "noPlatformConnected": "Aucun compte connecté. Connectez-en un dans Paramètres.",
+    "postComposerCommentImageInvalidType": "Ce fichier n'est pas une image.",
+    "postComposerCommentImageTooLarge": "Image trop volumineuse (10 Mo max).",
+    "postComposerCommentImageUploadFailed": "Échec de l'envoi de l'image.",
+    "postComposerCommentImageUploading": "Envoi en cours...",
+    "postComposerMediaDropzone": "Glissez une photo ou une vidéo ici, ou cliquez pour parcourir",
+    "postComposerMediaInvalidType": "Ce fichier doit être une image ou une vidéo.",
+    "postComposerMediaLabel": "Photo ou vidéo (optionnel)",
+    "postComposerMediaStillUploading": "Attendez la fin de l'envoi du fichier.",
+    "postComposerMediaTooLarge": "Fichier trop volumineux (200 Mo max).",
+    "postComposerMediaUploadFailed": "Échec de l'envoi du fichier.",
+    "postComposerMediaUploading": "Envoi en cours...",
+    "postComposerNoAccounts": "Aucun compte Facebook/LinkedIn connecté. Connectez-en un dans Paramètres."
   },
   "abonnement": {
     "title": "Abonnement",
@@ -1015,5 +1108,80 @@
     "availableUntil": "Disponible jusqu'au {{date}}",
     "expiresInDays": "Expire dans {{days}} jour(s) · Télécharger",
     "expired": "Média expiré — Ce fichier a été supprimé automatiquement conformément à la politique de conservation."
+  },
+  "customReel": {
+    "durationHint": "La durée du clip doit être comprise entre {{min}} et {{max}} secondes.",
+    "endHandle": "Fin du clip",
+    "generate": "Générer ce reel",
+    "generateFailed": "La génération du reel personnalisé a échoué.",
+    "generating": "Génération en cours...",
+    "selected": "sélectionnées",
+    "startHandle": "Début du clip",
+    "subtitle": "Déplacez les curseurs pour choisir vous-même le passage à transformer en reel.",
+    "title": "Reel personnalisé",
+    "titlePlaceholder": "Titre du reel (optionnel)"
+  },
+  "manualReel": {
+    "generateFailed": "La génération du reel a échoué.",
+    "loadFailed": "Impossible de charger la scène.",
+    "noTranscript": "Aucune transcription disponible pour cette scène.",
+    "subtitle": "Choisissez vous-même le passage de la scène à transformer en reel.",
+    "title": "Création manuelle",
+    "transcript": "Transcription",
+    "unavailable": "La vidéo source de ce projet n'est plus disponible pour la création manuelle."
+  },
+  "projects": {
+    "captionProjectTitle": "Projet Sous-titres",
+    "confirmDelete": "Supprimer ce projet ?",
+    "count": "projet(s)",
+    "delete": "Supprimer",
+    "manualCreationButton": "Création manuelle",
+    "noPreview": "Aucun aperçu",
+    "open": "Ouvrir",
+    "reelProjectTitle": "Projet Reel",
+    "rename": "Renommer",
+    "renamePrompt": "Nouveau nom du projet",
+    "searchPlaceholder": "Rechercher par nom ou description...",
+    "statusCancelled": "Annulé"
+  },
+  "reel": {
+    "step": "étapes",
+    "videoScan": "Scan de la vidéo"
+  },
+  "sidebar": {
+    "close": "Fermer le menu",
+    "open": "Ouvrir le menu",
+    "dashboard": "Dashboard",
+    "reels": "Réels",
+    "captions": "Sous-titres",
+    "anonymousStories": "Histoires anonymes",
+    "filmSummaries": "Résumé de films",
+    "socialPublications": "Publications"
+  },
+  "scheduleWeek": {
+    "title": "Programmer la semaine",
+    "subtitle": "{{count}} clips · 1 par jour",
+    "loginRequired": "Connecte ton compte utilisateur pour programmer des publications.",
+    "timeLabel": "Heure",
+    "timezoneLabel": "Fuseau horaire",
+    "startFrom": "Commencer à partir de",
+    "clipFallbackTitle": "Short viral",
+    "clipLabel": "Clip {{index}}",
+    "accountsLabel": "Comptes",
+    "noAccounts": "Aucun compte TikTok/Instagram/YouTube connecté.",
+    "statusScheduling": "Programmation en cours...",
+    "statusDone": "Terminé",
+    "allScheduledSuccess": "Tous les clips ont été programmés avec succès",
+    "partialSuccess": "{{success}} programmés, {{failed}} échoués",
+    "close": "Fermer",
+    "cancel": "Annuler",
+    "submit": "Programmer {{count}} clips",
+    "finish": "Terminer"
+  },
+  "creditGuard": {
+    "defaultOperation": "cette opération",
+    "insufficientCredits": "Crédits insuffisants pour {{operation}}.",
+    "required": "Il vous faut au moins {{required}} cr (solde total : {{available}} cr).",
+    "reload": "Recharger"
   }
 }

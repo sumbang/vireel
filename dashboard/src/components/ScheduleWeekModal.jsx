@@ -156,15 +156,17 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, userI
                         <Calendar size={20} className="text-white" />
                     </div>
                     <div>
-                        <h3 className="title-contrast text-lg font-bold">Programar Semana</h3>
-                        <p className="text-xs text-slate-400 dark:text-zinc-500">{clips?.length || 0} clips &middot; 1 por día</p>
+                        <h3 className="title-contrast text-lg font-bold">{t('scheduleWeek.title', 'Programmer la semaine')}</h3>
+                        <p className="text-xs text-slate-400 dark:text-zinc-500">
+                            {t('scheduleWeek.subtitle', '{{count}} clips · 1 par jour', { count: clips?.length || 0 })}
+                        </p>
                     </div>
                 </div>
 
                 {!userId && (
                     <div className="mb-4 p-3 bg-yellow-500/10 border border-yellow-500/20 text-yellow-200 text-xs rounded-lg flex items-start gap-2">
                         <AlertCircle size={14} className="mt-0.5 shrink-0" />
-                        <div>Connecte ton compte utilisateur pour programmer des publications.</div>
+                        <div>{t('scheduleWeek.loginRequired', 'Connecte ton compte utilisateur pour programmer des publications.')}</div>
                     </div>
                 )}
 
@@ -173,7 +175,7 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, userI
                     <div>
                         <label className="block text-xs font-bold text-slate-500 dark:text-zinc-400 mb-2 flex items-center gap-2">
                             <Clock size={14} className="text-purple-400" />
-                            Hora
+                            {t('scheduleWeek.timeLabel', 'Heure')}
                         </label>
                         <input
                             type="time"
@@ -186,7 +188,7 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, userI
                     <div>
                         <label className="block text-xs font-bold text-slate-500 dark:text-zinc-400 mb-2 flex items-center gap-2">
                             <Globe size={14} className="text-indigo-400" />
-                            Zona horaria
+                            {t('scheduleWeek.timezoneLabel', 'Fuseau horaire')}
                         </label>
                         <select
                             value={timezone}
@@ -203,7 +205,7 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, userI
 
                 {/* Start day offset */}
                 <div className="mb-5 flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-500 dark:text-zinc-400">Empezar desde</span>
+                    <span className="text-xs font-bold text-slate-500 dark:text-zinc-400">{t('scheduleWeek.startFrom', 'Commencer à partir de')}</span>
                     <div className="flex items-center gap-2">
                         <button
                             onClick={() => setStartOffset(Math.max(1, startOffset - 1))}
@@ -241,10 +243,10 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, userI
 
                             <div className="flex-1 min-w-0">
                                 <div className="text-xs font-bold text-white truncate">
-                                    Clip {index + 1}
+                                    {t('scheduleWeek.clipLabel', 'Clip {{index}}', { index: index + 1 })}
                                 </div>
                                 <div className="text-[10px] text-slate-400 dark:text-zinc-500 truncate">
-                                    {clip.video_title_for_youtube_short || 'Viral Short'}
+                                    {clip.video_title_for_youtube_short || t('scheduleWeek.clipFallbackTitle', 'Short viral')}
                                 </div>
                                 <div className="text-[10px] text-zinc-600 mt-0.5">
                                     {time}h &middot; {TIMEZONES.find(t => t.value === timezone)?.label || timezone}
@@ -271,9 +273,9 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, userI
 
                 {/* Accounts */}
                 <div className="mb-5">
-                    <label className="block text-xs font-bold text-slate-500 dark:text-zinc-400 mb-2">Comptes</label>
+                    <label className="block text-xs font-bold text-slate-500 dark:text-zinc-400 mb-2">{t('scheduleWeek.accountsLabel', 'Comptes')}</label>
                     {accounts.length === 0 ? (
-                        <p className="text-xs text-slate-400 dark:text-zinc-500">Aucun compte TikTok/Instagram/YouTube connecte.</p>
+                        <p className="text-xs text-slate-400 dark:text-zinc-500">{t('scheduleWeek.noAccounts', 'Aucun compte TikTok/Instagram/YouTube connecté.')}</p>
                     ) : (
                         <div className="space-y-2">
                             {SCHEDULE_WEEK_PLATFORMS.map((platform) => {
@@ -303,7 +305,7 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, userI
                 {(scheduling || done) && (
                     <div className="mb-5">
                         <div className="flex items-center justify-between text-xs text-slate-500 dark:text-zinc-400 mb-2">
-                            <span>{scheduling ? 'Programando...' : 'Completado'}</span>
+                            <span>{scheduling ? t('scheduleWeek.statusScheduling', 'Programmation en cours...') : t('scheduleWeek.statusDone', 'Terminé')}</span>
                             <span>{progress.current}/{progress.total}</span>
                         </div>
                         <div className="w-full h-2 bg-white/5 rounded-full overflow-hidden">
@@ -315,9 +317,11 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, userI
                         {done && (
                             <div className="mt-3 text-xs text-center">
                                 {failCount === 0 ? (
-                                    <span className="text-green-400">Todos los clips programados correctamente</span>
+                                    <span className="text-green-400">{t('scheduleWeek.allScheduledSuccess', 'Tous les clips ont été programmés avec succès')}</span>
                                 ) : (
-                                    <span className="text-yellow-400">{successCount} programados, {failCount} fallidos</span>
+                                    <span className="text-yellow-400">
+                                        {t('scheduleWeek.partialSuccess', '{{success}} programmés, {{failed}} échoués', { success: successCount, failed: failCount })}
+                                    </span>
                                 )}
                             </div>
                         )}
@@ -331,7 +335,7 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, userI
                         disabled={scheduling}
                         className="flex-1 py-3 bg-white/5 hover:bg-white/10 text-slate-700 dark:text-zinc-300 rounded-xl font-medium transition-colors disabled:opacity-50"
                     >
-                        {done ? 'Cerrar' : 'Cancelar'}
+                        {done ? t('scheduleWeek.close', 'Fermer') : t('scheduleWeek.cancel', 'Annuler')}
                     </button>
                     {!done ? (
                         <button
@@ -342,12 +346,12 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, userI
                             {scheduling ? (
                                 <>
                                     <Loader2 size={16} className="animate-spin" />
-                                    Programando...
+                                    {t('scheduleWeek.statusScheduling', 'Programmation en cours...')}
                                 </>
                             ) : (
                                 <>
                                     <Calendar size={16} />
-                                    Programar {clips?.length || 0} Clips
+                                    {t('scheduleWeek.submit', 'Programmer {{count}} clips', { count: clips?.length || 0 })}
                                 </>
                             )}
                         </button>
@@ -358,7 +362,7 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, userI
                             className="flex-1 py-3 bg-gradient-to-r from-violet-500 to-purple-600 hover:from-violet-400 hover:to-purple-500 text-white rounded-xl font-bold transition-all flex items-center justify-center gap-2"
                         >
                             <ExternalLink size={16} />
-                            Terminer
+                            {t('scheduleWeek.finish', 'Terminer')}
                         </button>
                     )}
                 </div>

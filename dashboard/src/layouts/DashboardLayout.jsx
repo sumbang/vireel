@@ -225,7 +225,7 @@ export default function DashboardLayout() {
                                     }
                                 >
                                     <ItemIcon size={20} />
-                                    <span className={labelClassName}>{item.sidebarLabel}</span>
+                                    <span className={labelClassName}>{t(item.sidebarLabelKey, item.sidebarLabel)}</span>
                                 </NavLink>
                             );
                         })}

@@ -15,6 +15,7 @@ describe('DASHBOARD_SIDEBAR_ITEMS', () => {
             expect(item.key).toBeTruthy();
             expect(item.title).toBeTruthy();
             expect(item.sidebarLabel).toBeTruthy();
+            expect(item.sidebarLabelKey).toBeTruthy();
             expect(item.icon).toBeTruthy();
             expect(item.activeClassName).toContain('text-');
             expect(item.inactiveClassName).toContain('text-');

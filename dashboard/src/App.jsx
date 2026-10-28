@@ -160,7 +160,7 @@ const ProcessingChecklist = ({ status, logs, visibleClips, processingMedia }) =>
 
       <div className="mt-4 rounded-xl border border-slate-300 dark:border-white/10 bg-black/20 p-3">
         <div className="mb-2 flex items-center justify-between text-xs">
-          <span className="text-slate-500 dark:text-zinc-400">Progression</span>
+          <span className="text-slate-500 dark:text-zinc-400">{t("reels.progress", "Progression")}</span>
           <span className="font-medium text-zinc-200">{doneCount}/{totalCount} {t("reel.step","étapes")} ({progressPercent}%)</span>
         </div>
         <div className="h-2 w-full overflow-hidden rounded-full bg-white/10">
@@ -264,7 +264,9 @@ const EmptyResultsState = ({ status }) => {
   );
 };
 
-const Sidebar = ({ currentTab, onNavigate }) => (
+const Sidebar = ({ currentTab, onNavigate }) => {
+  const { t } = useTranslation();
+  return (
     <div className="w-20 lg:w-64 bg-surface border-r border-slate-200 dark:border-white/5 flex flex-col h-full shrink-0 transition-all duration-300">
       <div className="p-6 flex items-center gap-3">
         <div className="w-8 h-8 bg-white/5 rounded-lg flex items-center justify-center shrink-0 overflow-hidden border border-slate-200 dark:border-white/5">
@@ -283,14 +285,15 @@ const Sidebar = ({ currentTab, onNavigate }) => (
                   className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl transition-colors ${currentTab === item.key ? item.activeClassName : item.inactiveClassName}`}
               >
                 <ItemIcon size={20} />
-                <span className="font-medium hidden lg:block">{item.sidebarLabel}</span>
+                <span className="font-medium hidden lg:block">{t(item.sidebarLabelKey, item.sidebarLabel)}</span>
               </button>
           );
         })}
       </nav>
 
     </div>
-);
+  );
+};
 
 
 const pollJob = async (jobId, userId = "") => {

@@ -1527,7 +1527,7 @@ export default function SettingsPage() {
             <Coins size={20} className="text-yellow-400" />
           </div>
           <div>
-            <h2 className="text-xl font-semibold">Recharger des crédits</h2>
+            <h2 className="text-xl font-semibold">{t("settings.buyCreditsTitle", "Recharger des crédits")}</h2>
             <p className="text-xs text-slate-500 dark:text-zinc-400 mt-0.5">1 EUR = {CREDIT_RATE} {t("abonnement.creditRate","crédits · solde actuel ")}: <span className="text-slate-900 dark:text-white font-medium">{credits.toLocaleString()} / {Number(creditMax || 0).toLocaleString()} cr</span></p>
           </div>
         </div>

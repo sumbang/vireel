@@ -476,7 +476,7 @@ export default function SocialPublicationsPage() {
                         <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-zinc-500" />
                         <input
                             type="text"
-                            placeholder="Rechercher..."
+                            placeholder={t("social.searchPlaceholder", "Rechercher...")}
                             value={searchInput}
                             onChange={(e) => {
                                 setSearchInput(e.target.value);

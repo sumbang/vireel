@@ -12,7 +12,7 @@ import BillingIntervalToggle from "../components/BillingIntervalToggle";
 import { resolvePlanColorStyle } from "../lib/abonnementDisplay";
 
 export default function AbonnementPage() {
-    const { t } = useTranslation();
+    const { t, language } = useTranslation();
     const { user } = useAuth();
     const {
         credits, creditMax, refresh: refreshCredits,
@@ -210,7 +210,7 @@ export default function AbonnementPage() {
                 {items.map((plan) => {
                     const styles = resolvePlanColorStyle(plan);
                     return (
-                        <PlanCard key={plan.name} plan={plan} billingInterval={billingInterval} t={t}>
+                        <PlanCard key={plan.name} plan={plan} billingInterval={billingInterval} t={t} language={language}>
                             <button
                                 onClick={() => handleCheckout(plan)}
                                 disabled={!user?.id || loadingPlanId === plan.id}

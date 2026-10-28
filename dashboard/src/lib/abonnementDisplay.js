@@ -99,3 +99,25 @@ export function resolvePlanIcon(plan) {
 export function resolvePlanColorStyle(plan) {
     return colorStyles[plan?.color] || defaultColorStyle;
 }
+
+// The abonnement table's marketing-copy columns (cible/description/
+// features) are the French version; their "_en" counterparts
+// (20261028_add_english_fields_to_abonnement.sql) hold the English
+// version. Falls back to the French column when the plan has no English
+// value yet for that field (empty string, empty array, null), so an
+// English-speaking visitor never sees a blank card while the catalog is
+// being translated plan by plan.
+function hasContent(value) {
+    if (Array.isArray(value)) return value.length > 0;
+    if (typeof value === "string") return value.trim().length > 0;
+    return value != null;
+}
+
+export function pickLocalizedPlanField(plan, field, language) {
+    if (!plan) return null;
+    if (language === "en") {
+        const enValue = plan[`${field}_en`];
+        if (hasContent(enValue)) return enValue;
+    }
+    return plan[field] ?? null;
+}

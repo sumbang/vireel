@@ -431,7 +431,13 @@
     "close": "Fermer",
     "loading": "Chargement...",
     "noItemsFound": "Aucun élément trouvé",
-    "or": "ou"
+    "or": "ou",
+    "deleteFailed": "La suppression a échoué.",
+    "authRequired": "Authentification requise. Reconnecte-toi.",
+    "projectNotFound": "Projet introuvable",
+    "jobStateRecoveryFailed": "Impossible de récupérer l'état de ce projet.",
+    "startingProcess": "Démarrage du traitement...",
+    "statusRetrievalFailed": "Impossible de récupérer le statut du traitement. Rafraîchis ou rouvre cette page."
   },
   "captionsModal": {
     "title": "Éditeur de captions",
@@ -691,7 +697,28 @@
     "statsEmpty": "Aucune donnée sur cette période.",
     "statsError": "Impossible de charger les statistiques.",
     "statsEyebrow": "Vue d'ensemble",
-    "statsTitle": "Statistiques"
+    "statsTitle": "Statistiques",
+    "range7d": "7 jours",
+    "range30d": "30 jours",
+    "range90d": "90 jours",
+    "rangeAll": "Tout",
+    "chartLegendReels": "Réels",
+    "chartLegendCaptions": "Sous-titres",
+    "chartLegendAnonymousStories": "Histoires anonymes",
+    "chartLegendFilmSummaries": "Résumé de film",
+    "metricFollowers": "Abonnés",
+    "metricImpressions": "Impressions",
+    "metricReach": "Portée",
+    "metricEngagement": "Engagement",
+    "metricProfileViews": "Vues du profil",
+    "metricViews": "Vues",
+    "metricFollowsGained": "Nouveaux abonnés",
+    "metricFollowsLost": "Abonnés perdus",
+    "metricWatchTime": "Minutes visionnées",
+    "metricSubscribersGained": "Abonnés gagnés",
+    "metricSubscribersLost": "Abonnés perdus",
+    "metricLikes": "Mentions J'aime",
+    "metricComments": "Commentaires"
   },
   "social": {
     "socialPublications": "Publications sociales",
@@ -759,7 +786,8 @@
     "postComposerMediaTooLarge": "Fichier trop volumineux (200 Mo max).",
     "postComposerMediaUploadFailed": "Échec de l'envoi du fichier.",
     "postComposerMediaUploading": "Envoi en cours...",
-    "postComposerNoAccounts": "Aucun compte Facebook/LinkedIn connecté. Connectez-en un dans Paramètres."
+    "postComposerNoAccounts": "Aucun compte Facebook/LinkedIn connecté. Connectez-en un dans Paramètres.",
+    "searchPlaceholder": "Rechercher..."
   },
   "abonnement": {
     "title": "Abonnement",
@@ -816,7 +844,8 @@
     "creditsBreakdown": "{{standard}} crédits standards · {{promo}} crédits promotionnels",
     "expiringBatch": "{{amount}} crédits promotionnels expirent dans {{days}} jour(s)",
     "creditsBreakdown3": "{{standard}} crédits abonnement · {{purchased}} crédits achetés · {{promo}} crédits promotionnels",
-    "expiringPurchasedBatch": "{{amount}} crédits achetés expirent dans {{days}} jour(s)"
+    "expiringPurchasedBatch": "{{amount}} crédits achetés expirent dans {{days}} jour(s)",
+    "maxSocialAccounts": "Jusqu'à {{count}} compte(s) par réseau social"
   },
   "serviceUsage": {
     "totalAvailable": "{{total}} crédits disponibles",
@@ -1102,7 +1131,9 @@
     "errorInsufficientCredits": "Tu n'as pas assez de crédits pour cette opération.",
     "errorJobCancelled": "L'opération a été annulée.",
     "sessionExpired": "Ta session a expiré. Reconnecte-toi puis reviens sur cette page pour continuer le suivi.",
-    "genericError": "Une erreur est survenue. Merci de réessayer."
+    "genericError": "Une erreur est survenue. Merci de réessayer.",
+    "stepAddingSubtitles": "Ajout des sous-titres",
+    "stepAddingSubtitlesDesc": "Incrustation des sous-titres choisis dans la vidéo finale."
   },
   "media": {
     "availableUntil": "Disponible jusqu'au {{date}}",
@@ -1183,5 +1214,21 @@
     "insufficientCredits": "Crédits insuffisants pour {{operation}}.",
     "required": "Il vous faut au moins {{required}} cr (solde total : {{available}} cr).",
     "reload": "Recharger"
+  },
+  "captions": {
+    "localUploadOnly": "Upload local uniquement pour les sous-titres.",
+    "generationFailed": "La génération des sous-titres a échoué.",
+    "projectProcessingError": "Ce projet a rencontré une erreur pendant le traitement."
+  },
+  "resultCard": {
+    "autoEditTitle": "Auto Edit",
+    "viralHookTitle": "Hook viral"
+  },
+  "processingAnimation": {
+    "videoTitle": "Traitement de la vidéo"
+  },
+  "resetPassword": {
+    "pageTitle": "Réinitialiser le mot de passe",
+    "pageSubtitle": "Saisis l'email du compte pour recevoir un lien"
   }
 }

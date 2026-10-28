@@ -256,7 +256,7 @@ export default function FilmSummaryCreatePage() {
 
     const handleProcess = async (data) => {
         if (!user?.id) {
-            setError("Authentication required. Please reconnect your session.");
+            setError(t("common.authRequired", "Authentification requise. Reconnecte-toi."));
             return;
         }
         if (!hasCreditsAvailable) {

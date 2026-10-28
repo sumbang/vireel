@@ -41,8 +41,8 @@ export default function ResetPassword() {
 
     return (
         <AuthLayout
-            title="Reinitialiser le mot de passe"
-            subtitle="Saisis l'email du compte pour recevoir un lien"
+            title={t("resetPassword.pageTitle", "Réinitialiser le mot de passe")}
+            subtitle={t("resetPassword.pageSubtitle", "Saisis l'email du compte pour recevoir un lien")}
         >
             <main className="page auth-page">
                 <section className="card auth-card auth-surface">

@@ -58,7 +58,7 @@ export default function NewCaptionPage() {
                     if (cancelled) return;
                     if (!projectResp.ok) {
                         setStatus("error");
-                        setError(projectPayload?.detail || payload?.detail || "Project not found");
+                        setError(projectPayload?.detail || payload?.detail || t("common.projectNotFound", "Projet introuvable"));
                         return;
                     }
 
@@ -69,7 +69,7 @@ export default function NewCaptionPage() {
                     }
                     if (projectStatus === "error") {
                         setStatus("error");
-                        setError("Ce projet a rencontre une erreur pendant le traitement.");
+                        setError(t("captions.projectProcessingError", "Ce projet a rencontré une erreur pendant le traitement."));
                     } else {
                         setStatus("processing");
                         setError("");
@@ -81,7 +81,7 @@ export default function NewCaptionPage() {
                     setJobId(String(linkedJob.id));
                     setStatus(normalizeStatus(linkedJob.status || payload?.project_status || "processing"));
                     if (linkedJob.status === "failed") {
-                        const msg = linkedJob?.error?.message || "Caption generation failed";
+                        const msg = linkedJob?.error?.message || t("captions.generationFailed", "La génération des sous-titres a échoué.");
                         setError(String(msg));
                     }
                     return;
@@ -95,14 +95,14 @@ export default function NewCaptionPage() {
 
                 if (projectStatus === "error") {
                     setStatus("error");
-                    setError("Ce projet a rencontre une erreur pendant le traitement.");
+                    setError(t("captions.projectProcessingError", "Ce projet a rencontré une erreur pendant le traitement."));
                 } else {
                     setStatus("processing");
                 }
             } catch {
                 if (!cancelled) {
                     setStatus("error");
-                    setError("Unable to recover this project job state.");
+                    setError(t("common.jobStateRecoveryFailed", "Impossible de récupérer l'état de ce projet."));
                 }
             } finally {
                 if (!cancelled) setProjectJobLoading(false);
@@ -153,7 +153,7 @@ export default function NewCaptionPage() {
                 if (!response.ok) {
                     pollFailureCountRef.current += 1;
                     if (pollFailureCountRef.current >= 3) {
-                        setError("Unable to retrieve processing status. Please refresh or reopen this page.");
+                        setError(t("common.statusRetrievalFailed", "Impossible de récupérer le statut du traitement. Rafraîchis ou rouvre cette page."));
                     }
                     return;
                 }
@@ -172,7 +172,7 @@ export default function NewCaptionPage() {
                     lastLoggedCountRef.current = backendLogs.length;
                 }
                 if (data.status === "failed") {
-                    const msg = data?.error?.message || data?.error || "Caption generation failed";
+                    const msg = data?.error?.message || data?.error || t("captions.generationFailed", "La génération des sous-titres a échoué.");
                     setError(String(msg));
                 }
 
@@ -197,7 +197,7 @@ export default function NewCaptionPage() {
 
     const handleProcess = async (data) => {
         if (!user?.id) {
-            setError("Authentication required. Please reconnect your session.");
+            setError(t("common.authRequired", "Authentification requise. Reconnecte-toi."));
             return;
         }
         if (!hasCreditsForCaption) {
@@ -207,7 +207,7 @@ export default function NewCaptionPage() {
             return;
         }
         if (data.type !== "file") {
-            setError("Upload local uniquement pour les sous-titres.");
+            setError(t("captions.localUploadOnly", "Upload local uniquement pour les sous-titres."));
             return;
         }
 
@@ -235,10 +235,10 @@ export default function NewCaptionPage() {
                 } catch {
                     // Keep raw server detail.
                 }
-                setError(detail || "Subtitle generation failed");
+                setError(detail || t("captions.generationFailed", "La génération des sous-titres a échoué."));
                 setStatus("error");
                 if (response.status === 402) {
-                    globalThis.alert(detail || "Credits insuffisants pour initier cette opération.");
+                    globalThis.alert(detail || t("common.insufficientCreditsStart", "Crédits insuffisants pour initier cette opération."));
                 }
                 return;
             }
@@ -247,7 +247,7 @@ export default function NewCaptionPage() {
             setJobId(payload.job_id || "");
             setStatus("processing");
         } catch (err) {
-            setError(err.message || "Subtitle generation failed");
+            setError(err.message || t("captions.generationFailed", "La génération des sous-titres a échoué."));
             setStatus("error");
         }
     };

@@ -393,7 +393,7 @@ function App({ activeTab = "reel-generator", embedded = false } = {}) {
               setJobId(null);
               setResults(null);
               setPartialClips([]);
-              setLogs([projectPayload?.detail || payload?.detail || 'Project not found']);
+              setLogs([projectPayload?.detail || payload?.detail || t("common.projectNotFound", "Projet introuvable")]);
               setProcessingMedia({ type: 'url', payload: '' });
               return;
             }
@@ -446,7 +446,7 @@ function App({ activeTab = "reel-generator", embedded = false } = {}) {
           setJobId(null);
           setResults(null);
           setPartialClips([]);
-          setLogs(['Unable to recover this project job state.']);
+          setLogs([t("common.jobStateRecoveryFailed", "Impossible de récupérer l'état de ce projet.")]);
           setProcessingMedia({ type: 'url', payload: '' });
         }
       };
@@ -603,7 +603,7 @@ function App({ activeTab = "reel-generator", embedded = false } = {}) {
   const handleProcess = async (data) => {
     if (!user?.id) {
       setStatus('error');
-      setLogs(["Authentication required. Please reconnect your session."]);
+      setLogs([t("common.authRequired", "Authentification requise. Reconnecte-toi.")]);
       return;
     }
     if (!hasAnyReelCredit) {
@@ -617,7 +617,7 @@ function App({ activeTab = "reel-generator", embedded = false } = {}) {
     setHasNotifiedCompletion(false);
     setShowCompletionPanel(false);
     setStatus('processing');
-    setLogs(["Starting process..."]);
+    setLogs([t("common.startingProcess", "Démarrage du traitement...")]);
     setResults(null);
     setPartialClips([]);
     setProcessingMedia(data);

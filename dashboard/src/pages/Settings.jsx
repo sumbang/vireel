@@ -8,7 +8,7 @@ import { useAuth } from '../state/AuthContext';
 import { useTheme } from '../state/ThemeContext';
 import { useUserCredits } from '../state/UserCreditsContext';
 import ServiceUsage from "../components/ServiceUsage.jsx";
-import { API_BASE_URL, getApiUrl } from '../config';
+import { API_BASE_URL, getApiUrl, fetchAppConfig } from '../config';
 import { getAuthHeaders } from '../lib/apiAuth';
 import { useTranslation } from '../state/LanguageContext';
 
@@ -268,6 +268,10 @@ export default function SettingsPage() {
   const [maxSocialAccount, setMaxSocialAccount] = useState(0);
   const [openAccountMenuId, setOpenAccountMenuId] = useState(null);
   const [linkedinInfoOpen, setLinkedinInfoOpen] = useState(false);
+  // Mirrors the backend's LINKEDIN_INSIGHTS_ENABLED kill switch -- when ops
+  // disable it, the "LinkedIn (Analytics)" card must disappear too, not
+  // just have its /connect/linkedin_analytics calls 404.
+  const [linkedinInsightsEnabled, setLinkedinInsightsEnabled] = useState(true);
 
   // Credit history state
   const [history, setHistory] = useState([]);
@@ -374,6 +378,19 @@ export default function SettingsPage() {
   useEffect(() => {
     refreshConnectedAccounts();
   }, [user?.id]);
+
+  useEffect(() => {
+    let active = true;
+    fetchAppConfig()
+      .then((cfg) => {
+        if (!active || !cfg || typeof cfg.linkedinInsightsEnabled !== 'boolean') return;
+        setLinkedinInsightsEnabled(cfg.linkedinInsightsEnabled);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
 
   // Detect credit_purchase success/cancel query param
   useEffect(() => {
@@ -1168,7 +1185,7 @@ export default function SettingsPage() {
         ) : null}
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {SOCIAL_NETWORKS.map((network) => {
+          {SOCIAL_NETWORKS.filter((network) => network.id !== 'linkedin_analytics' || linkedinInsightsEnabled).map((network) => {
             const NetworkIcon = network.icon;
             const accounts = accountsByPlatform[network.id] || [];
             const isConnected = accounts.length > 0;

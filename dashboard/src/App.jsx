@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Sparkles, Activity, ArrowLeft,
+  Sparkles, Activity,
   CheckCircle2, Clock3, Download, Film, Loader2, AlertCircle, Scissors, X,
 } from 'lucide-react';
+import Breadcrumbs from './components/Breadcrumbs';
 import MediaInput from './components/MediaInput';
 import ResultCard from './components/ResultCard';
 import ProcessingAnimation from './components/ProcessingAnimation';
@@ -701,19 +702,18 @@ function App({ activeTab = "reel-generator", embedded = false } = {}) {
           {currentTab === 'reel-generator' && (
               <div className="flex-1 overflow-y-auto p-8 space-y-6">
                 <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                <div>
+                <div className="space-y-2">
+                  <Breadcrumbs
+                      items={[
+                          { label: t("breadcrumbs.dashboard", "Dashboard"), href: "/dashboard" },
+                          { label: t("breadcrumbs.reels", "Reels"), href: "/dashboard/reels" },
+                          { label: t("breadcrumbs.create", "Create") },
+                      ]}
+                      ariaLabel={t('breadcrumbs.ariaLabel', 'Breadcrumb')}
+                  />
                   <h1 className="text-3xl font-black tracking-tight">{t('app.reelGenerator', 'Reel generation')}</h1>
                   <p className="mt-2 text-sm text-slate-500 dark:text-zinc-400">{t('app.dropVideo', 'Drop your long-form video below to instantly generate viral clips with AI.')}</p>
                 </div>
-
-                  <button
-                      type="button"
-                      onClick={() => navigate("/dashboard/reels")}
-                      className="inline-flex items-center gap-2 rounded-xl border border-slate-300 dark:border-white/10 bg-slate-100 dark:bg-white/5 px-4 py-2.5 text-sm font-medium text-slate-800 dark:text-zinc-200 shadow-sm hover:bg-slate-200 dark:hover:bg-white/10"
-                  >
-                    <ArrowLeft size={14} />
-                    {t("app.backToList", "Back to list")}
-                  </button>
 
               </div>
 

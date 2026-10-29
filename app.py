@@ -3956,6 +3956,7 @@ def get_config():
         "filmSummaryMaxTargetDurationSeconds": FILM_SUMMARY_MAX_TARGET_DURATION_SECONDS,
         "filmSummaryAllowedVoices": list(film_summary.ALLOWED_TTS_VOICES),
         "filmSummaryDefaultVoice": FILM_SUMMARY_TTS_DEFAULT_VOICE,
+        "linkedinInsightsEnabled": LINKEDIN_INSIGHTS_ENABLED,
     }
 
 @app.get("/api/services/status")

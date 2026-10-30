@@ -919,10 +919,17 @@ export default function SettingsPage() {
             // act on -- most importantly Facebook's page-selection payload,
             // which this tab must relay to /api/auth/facebook/select-page
             // before the flow is actually done. Give that event a short
-            // grace period to land (and settle this promise itself) before
-            // falling back to treating "popup closed with nothing received"
-            // as success.
-            window.setTimeout(() => finish(resolve), 300);
+            // grace period to land before falling back to treating "popup
+            // closed with nothing received" as success -- but only if
+            // nothing has started handling a real payload yet: once
+            // processPayload sets `handled`, Facebook's page picker can
+            // legitimately take far longer than this grace period (it
+            // waits on a window.prompt() answer), and that in-flight
+            // handling -- not this fallback -- must be the one to call
+            // finish() once it actually completes.
+            window.setTimeout(() => {
+              if (!handled) finish(resolve);
+            }, 300);
           }
         }, 500);
 

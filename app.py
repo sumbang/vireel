@@ -10783,6 +10783,19 @@ async def list_abonnements():
     return {"plans": visible_plans}
 
 
+def _subscription_is_paused(subscription: Dict[str, Any]) -> bool:
+    """True while Stripe is voiding invoices for this subscription (see
+    pause_souscription) and no later resume_souscription call has undone
+    it. resume_souscription sets resumed_at without clearing paused_at
+    (Stripe only clears pause_collection, not this row), so the two
+    timestamps must be compared rather than checking paused_at alone."""
+    paused_at = _parse_iso_datetime(subscription.get("paused_at"))
+    if not paused_at:
+        return False
+    resumed_at = _parse_iso_datetime(subscription.get("resumed_at"))
+    return not resumed_at or resumed_at < paused_at
+
+
 @app.get("/api/souscription", responses={401: {"description": "Unauthorized"}, 403: {"description": "Forbidden"}})
 async def get_current_souscription(
     request: Request,
@@ -10818,6 +10831,13 @@ async def get_current_souscription(
     if scheduled_abonnement_id:
         scheduled_plan = await supabase_get_abonnement(scheduled_abonnement_id)
         subscription["scheduled_abonnement_name"] = (scheduled_plan or {}).get("name") or scheduled_abonnement_id
+
+    # Drives the subscription-management UI's status label and which of
+    # cancel/reactivate/pause/resume are available (see Settings.jsx) --
+    # computed once here so the frontend never has to re-derive it from
+    # raw timestamps itself.
+    subscription["is_pending_cancellation"] = subscription.get("auto_renew") is False
+    subscription["is_paused"] = _subscription_is_paused(subscription)
 
     return subscription
 

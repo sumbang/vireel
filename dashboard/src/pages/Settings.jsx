@@ -346,6 +346,21 @@ export default function SettingsPage() {
     return planNameById[rawId] || rawId || t('settings.active', 'Active');
   }, [subscription, planNameById, t]);
 
+  // Mirrors the backend's own computation (is_pending_cancellation/
+  // is_paused on GET /api/souscription) rather than re-deriving it from
+  // raw timestamps here -- these three states are mutually exclusive and
+  // each only leaves one of cancel/reactivate/pause/resume meaningful.
+  const isSubscriptionPendingCancellation = Boolean(subscription?.is_pending_cancellation);
+  const isSubscriptionPaused = Boolean(subscription?.is_paused);
+  const isSubscriptionNormallyActive = Boolean(subscription) && !isSubscriptionPendingCancellation && !isSubscriptionPaused;
+
+  const subscriptionStatusLabel = useMemo(() => {
+    if (!subscription) return t('settings.inactive', 'Inactive');
+    if (isSubscriptionPaused) return t('settings.statusPaused', 'Paused');
+    if (isSubscriptionPendingCancellation) return t('settings.statusPendingCancellation', 'Cancellation scheduled');
+    return t('settings.active', 'Active');
+  }, [subscription, isSubscriptionPaused, isSubscriptionPendingCancellation, t]);
+
   const syncConnectedNetworksCache = (accounts) => {
     const next = {};
     for (const network of SOCIAL_NETWORKS) {
@@ -1376,8 +1391,22 @@ export default function SettingsPage() {
           <>
             <div className="rounded-lg border border-slate-300 dark:border-white/10 bg-white/5 p-4 mb-4 text-sm">
               <p className="text-slate-700 dark:text-zinc-300">
-                {t('settings.status', 'Status')}: <span className="font-semibold text-slate-900 dark:text-white">{subscription ? t('settings.active', 'Active') : t('settings.inactive', 'Inactive')}</span>
+                {t('settings.status', 'Status')}: <span className="font-semibold text-slate-900 dark:text-white">{subscriptionStatusLabel}</span>
               </p>
+              {isSubscriptionPendingCancellation ? (
+                <p className="text-amber-700 dark:text-amber-300 mt-1">
+                  {t(
+                    'settings.pendingCancellationNotice',
+                    'Auto-renewal is canceled: access remains active until {{date}}, then the subscription will not be renewed.',
+                    { date: subscription?.payment_end_date ? new Date(subscription.payment_end_date).toLocaleDateString('fr-FR') : '' }
+                  )}
+                </p>
+              ) : null}
+              {isSubscriptionPaused ? (
+                <p className="text-amber-700 dark:text-amber-300 mt-1">
+                  {t('settings.pausedNotice', 'Billing is paused: you will not be charged until you resume.')}
+                </p>
+              ) : null}
               {subscription ? (
                 <p className="text-slate-600 dark:text-zinc-400 mt-1">
                   {t('abonnement.currentPlan', 'Current plan')}: <span className="text-slate-900 dark:text-white font-medium">{currentPlanLabel}</span>
@@ -1439,28 +1468,28 @@ export default function SettingsPage() {
             <div className="flex flex-wrap gap-2 mb-4">
               <button
                 onClick={() => runSubAction('cancel')}
-                disabled={!subscription || subActionLoading === 'cancel'}
+                disabled={!isSubscriptionNormallyActive || subActionLoading === 'cancel'}
                 className="rounded-lg border border-rose-300 dark:border-red-500/30 bg-rose-100 dark:bg-red-500/10 px-3 py-2 text-xs text-rose-800 dark:text-red-300 hover:bg-rose-200 dark:hover:bg-red-500/20 disabled:opacity-40"
               >
                 {subActionLoading === 'cancel' ? '...' : t('settings.cancelRenewal', 'Cancel renewal')}
               </button>
               <button
                 onClick={() => runSubAction('reactivate')}
-                disabled={!subscription || subActionLoading === 'reactivate'}
+                disabled={!isSubscriptionPendingCancellation || subActionLoading === 'reactivate'}
                 className="rounded-lg border border-emerald-300 dark:border-green-500/30 bg-emerald-100 dark:bg-green-500/10 px-3 py-2 text-xs text-emerald-800 dark:text-green-300 hover:bg-emerald-200 dark:hover:bg-green-500/20 disabled:opacity-40"
               >
                 {subActionLoading === 'reactivate' ? '...' : t('settings.reactivate', 'Reactivate')}
               </button>
               <button
                 onClick={() => runSubAction('pause')}
-                disabled={!subscription || subActionLoading === 'pause'}
+                disabled={!isSubscriptionNormallyActive || subActionLoading === 'pause'}
                 className="rounded-lg border border-amber-300 dark:border-amber-500/30 bg-amber-100 dark:bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-500/20 disabled:opacity-40"
               >
                 <span className="inline-flex items-center gap-1"><PauseCircle size={12} /> {subActionLoading === 'pause' ? '...' : t('settings.pause', 'Pause')}</span>
               </button>
               <button
                 onClick={() => runSubAction('resume')}
-                disabled={!subscription || subActionLoading === 'resume'}
+                disabled={!isSubscriptionPaused || subActionLoading === 'resume'}
                 className="rounded-lg border border-sky-300 dark:border-blue-500/30 bg-sky-100 dark:bg-blue-500/10 px-3 py-2 text-xs text-sky-800 dark:text-blue-300 hover:bg-sky-200 dark:hover:bg-blue-500/20 disabled:opacity-40"
               >
                 <span className="inline-flex items-center gap-1"><PlayCircle size={12} /> {subActionLoading === 'resume' ? '...' : t('settings.resume', 'Resume')}</span>

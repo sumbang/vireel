@@ -7304,6 +7304,86 @@ def test_subscription_lifecycle_action_skips_email_without_request(monkeypatch):
     email_mock.assert_called_once_with(None, "subscription_paused", plan_name="Silver")
 
 
+def test_subscription_is_paused_true_when_paused_at_set_without_resume(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+    assert app._subscription_is_paused({"paused_at": "2026-10-01T00:00:00+00:00", "resumed_at": None}) is True
+
+
+def test_subscription_is_paused_false_when_never_paused(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+    assert app._subscription_is_paused({"paused_at": None, "resumed_at": None}) is False
+
+
+def test_subscription_is_paused_false_after_later_resume(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+    assert app._subscription_is_paused({
+        "paused_at": "2026-10-01T00:00:00+00:00",
+        "resumed_at": "2026-10-05T00:00:00+00:00",
+    }) is False
+
+
+def test_subscription_is_paused_true_when_paused_again_after_an_earlier_resume(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+    assert app._subscription_is_paused({
+        "paused_at": "2026-10-10T00:00:00+00:00",
+        "resumed_at": "2026-10-05T00:00:00+00:00",
+    }) is True
+
+
+def _stub_get_current_souscription_prereqs(monkeypatch, app, subscription):
+    monkeypatch.setattr(app, "_enforce_subscription_retention_policy", AsyncMock(return_value=None))
+    monkeypatch.setattr(app, "get_user_abonnement", AsyncMock(return_value=subscription))
+    monkeypatch.setattr(app, "supabase_get_abonnement", AsyncMock(return_value={"name": "Silver", "credit": 100}))
+
+
+def test_get_current_souscription_normal_active_flags(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+    _stub_get_current_souscription_prereqs(monkeypatch, app, {
+        "id": "sous-1", "abonnement": "silver", "auto_renew": True,
+        "paused_at": None, "resumed_at": None,
+    })
+
+    result = asyncio.run(app.get_current_souscription(request=None, user_id="u1"))
+
+    assert result["is_pending_cancellation"] is False
+    assert result["is_paused"] is False
+
+
+def test_get_current_souscription_pending_cancellation_flags(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+    _stub_get_current_souscription_prereqs(monkeypatch, app, {
+        "id": "sous-1", "abonnement": "silver", "auto_renew": False,
+        "canceled_at": "2026-10-20T00:00:00+00:00", "paused_at": None, "resumed_at": None,
+    })
+
+    result = asyncio.run(app.get_current_souscription(request=None, user_id="u1"))
+
+    assert result["is_pending_cancellation"] is True
+    assert result["is_paused"] is False
+
+
+def test_get_current_souscription_paused_flags(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+    _stub_get_current_souscription_prereqs(monkeypatch, app, {
+        "id": "sous-1", "abonnement": "silver", "auto_renew": True,
+        "paused_at": "2026-10-20T00:00:00+00:00", "resumed_at": None,
+    })
+
+    result = asyncio.run(app.get_current_souscription(request=None, user_id="u1"))
+
+    assert result["is_pending_cancellation"] is False
+    assert result["is_paused"] is True
+
+
+def test_get_current_souscription_none_without_active_subscription(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+    _stub_get_current_souscription_prereqs(monkeypatch, app, None)
+
+    result = asyncio.run(app.get_current_souscription(request=None, user_id="u1"))
+
+    assert result is None
+
+
 class _FakeStripeSubscriptionObject(dict):
     """Supports both dict-style item access (subscription["items"]) and
     attribute access (subscription.metadata), matching how the real

@@ -272,6 +272,9 @@ export default function SettingsPage() {
   // disable it, the "LinkedIn (Analytics)" card must disappear too, not
   // just have its /connect/linkedin_analytics calls 404.
   const [linkedinInsightsEnabled, setLinkedinInsightsEnabled] = useState(true);
+  // Same idea for the backend's INSTAGRAM_ENABLED kill switch (disabled
+  // while Meta's App Review for this app's Instagram scopes is pending).
+  const [instagramEnabled, setInstagramEnabled] = useState(true);
 
   // Credit history state
   const [history, setHistory] = useState([]);
@@ -383,8 +386,9 @@ export default function SettingsPage() {
     let active = true;
     fetchAppConfig()
       .then((cfg) => {
-        if (!active || !cfg || typeof cfg.linkedinInsightsEnabled !== 'boolean') return;
-        setLinkedinInsightsEnabled(cfg.linkedinInsightsEnabled);
+        if (!active || !cfg) return;
+        if (typeof cfg.linkedinInsightsEnabled === 'boolean') setLinkedinInsightsEnabled(cfg.linkedinInsightsEnabled);
+        if (typeof cfg.instagramEnabled === 'boolean') setInstagramEnabled(cfg.instagramEnabled);
       })
       .catch(() => {});
     return () => {
@@ -908,7 +912,17 @@ export default function SettingsPage() {
 
         const closePoll = window.setInterval(() => {
           if (popup.closed) {
-            finish(resolve);
+            window.clearInterval(closePoll);
+            // The popup calls window.close() immediately after writing its
+            // result (see _oauth_popup_response in app.py), which can race
+            // ahead of the storage/message event this tab still needs to
+            // act on -- most importantly Facebook's page-selection payload,
+            // which this tab must relay to /api/auth/facebook/select-page
+            // before the flow is actually done. Give that event a short
+            // grace period to land (and settle this promise itself) before
+            // falling back to treating "popup closed with nothing received"
+            // as success.
+            window.setTimeout(() => finish(resolve), 300);
           }
         }, 500);
 
@@ -1185,7 +1199,11 @@ export default function SettingsPage() {
         ) : null}
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {SOCIAL_NETWORKS.filter((network) => network.id !== 'linkedin_analytics' || linkedinInsightsEnabled).map((network) => {
+          {SOCIAL_NETWORKS.filter((network) => {
+            if (network.id === 'linkedin_analytics') return linkedinInsightsEnabled;
+            if (network.id === 'instagram') return instagramEnabled;
+            return true;
+          }).map((network) => {
             const NetworkIcon = network.icon;
             const accounts = accountsByPlatform[network.id] || [];
             const isConnected = accounts.length > 0;

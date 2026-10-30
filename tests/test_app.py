@@ -2552,6 +2552,73 @@ def test_publish_facebook_falls_back_to_text_when_photo_fails(monkeypatch):
     assert captured["url"] == "https://graph.facebook.com/page-1/feed"
 
 
+def test_fetch_facebook_pages_follows_pagination(monkeypatch):
+    # /me/accounts pages its results (25 per page by default) -- without
+    # following paging.next, a user managing more pages than that would
+    # silently lose the rest from the page-selection list in Settings.jsx.
+    app = _import_app_with_stubs(monkeypatch)
+
+    calls = []
+
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, url, params=None):
+            calls.append({"url": url, "params": params})
+            request = app.httpx.Request("GET", url)
+            if url == "https://graph.facebook.com/v19.0/me/accounts":
+                return app.httpx.Response(200, json={
+                    "data": [{"id": "page-1", "name": "Page One", "access_token": "tok-1"}],
+                    "paging": {"next": "https://graph.facebook.com/v19.0/me/accounts?after=cursor1"},
+                }, request=request)
+            return app.httpx.Response(200, json={
+                "data": [{"id": "page-2", "name": "Page Two", "access_token": "tok-2"}],
+            }, request=request)
+
+    monkeypatch.setattr(app.httpx, "AsyncClient", _FakeAsyncClient)
+
+    pages = asyncio.run(app.fetch_facebook_pages("user-token"))
+
+    assert [p["page_id"] for p in pages] == ["page-1", "page-2"]
+    assert len(calls) == 2
+    # The "next" URL already carries access_token -- it must not be resent.
+    assert calls[0]["params"]["access_token"] == "user-token"
+    assert calls[1]["params"] is None
+
+
+def test_fetch_facebook_pages_stops_without_next_page(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, url, params=None):
+            request = app.httpx.Request("GET", url)
+            return app.httpx.Response(200, json={
+                "data": [{"id": "page-1", "name": "Page One", "access_token": "tok-1"}],
+            }, request=request)
+
+    monkeypatch.setattr(app.httpx, "AsyncClient", _FakeAsyncClient)
+
+    pages = asyncio.run(app.fetch_facebook_pages("user-token"))
+
+    assert [p["page_id"] for p in pages] == ["page-1"]
+
+
 def test_publish_facebook_uses_native_background_when_preset_mapped(monkeypatch):
     # Spec: "Facebook — Publication de posts texte avec arriere-plan" --
     # a story with a mapped preset must publish as Meta's native

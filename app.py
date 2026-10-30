@@ -16664,27 +16664,39 @@ async def fetch_facebook_pages(user_access_token: str) -> List[Dict[str, Any]]:
     """
     Récupère les pages gérées par l'utilisateur avec leurs access tokens.
     Les tokens de page sont long-lived si le user_access_token est long-lived.
-    """
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        response = await client.get(
-            "https://graph.facebook.com/v19.0/me/accounts",
-            params={
-                "fields": "id,name,picture.width(200).height(200),access_token,category",
-                "access_token": user_access_token,
-            },
-        )
-    response.raise_for_status()
-    data = response.json()
 
-    pages = []
-    for item in data.get("data", []):
-        pages.append({
-            "page_id": item.get("id"),
-            "page_name": item.get("name"),
-            "page_picture": item.get("picture", {}).get("data", {}).get("url"),
-            "page_category": item.get("category"),
-            "page_access_token": item.get("access_token"),
-        })
+    Follows Graph API pagination (paging.next) -- /me/accounts pages its
+    results (25 per page by default), so without this a user managing more
+    pages than one page's worth would silently lose the rest from the
+    page-selection list in Settings.jsx.
+    """
+    pages: List[Dict[str, Any]] = []
+    url = "https://graph.facebook.com/v19.0/me/accounts"
+    params = {
+        "fields": "id,name,picture.width(200).height(200),access_token,category",
+        "access_token": user_access_token,
+        "limit": 100,
+    }
+
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        while url:
+            response = await client.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+
+            for item in data.get("data", []):
+                pages.append({
+                    "page_id": item.get("id"),
+                    "page_name": item.get("name"),
+                    "page_picture": item.get("picture", {}).get("data", {}).get("url"),
+                    "page_category": item.get("category"),
+                    "page_access_token": item.get("access_token"),
+                })
+
+            # The "next" URL already carries every query param (including
+            # access_token), so params must only be sent on the first request.
+            url = (data.get("paging") or {}).get("next")
+            params = None
 
     return pages
 

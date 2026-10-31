@@ -20206,17 +20206,27 @@ def _aggregate_social_insights_daily_rows(rows: List[Dict[str, Any]]) -> Dict[st
     return {"metrics": metrics, "totals": totals, "daily": daily, "monetization": latest_monetization}
 
 
-async def _get_stored_social_insights_for_account(account: Dict[str, Any], range_days: int) -> Dict[str, Any]:
+async def _get_stored_social_insights_for_account(account: Dict[str, Any], range_days: Optional[int]) -> Dict[str, Any]:
+    """range_days=None means "all": every stored day for this account, no
+    lower bound. There's no well-defined "previous period" to compare
+    against in that case, so trends are simply omitted (TrendBadge on the
+    frontend already renders nothing when a metric has no trend)."""
     until_date = _utcnow().date()
-    since_date = until_date - timedelta(days=range_days)
-    previous_since_date = since_date - timedelta(days=range_days)
 
-    current_rows = await _list_social_insights_daily(account["id"], since_date.isoformat(), until_date.isoformat())
-    previous_rows = await _list_social_insights_daily(account["id"], previous_since_date.isoformat(), (since_date - timedelta(days=1)).isoformat())
+    if range_days is None:
+        current_rows = await _list_social_insights_daily(account["id"], date(2000, 1, 1).isoformat(), until_date.isoformat())
+        current = _aggregate_social_insights_daily_rows(current_rows)
+        trends = {}
+    else:
+        since_date = until_date - timedelta(days=range_days)
+        previous_since_date = since_date - timedelta(days=range_days)
 
-    current = _aggregate_social_insights_daily_rows(current_rows)
-    previous = _aggregate_social_insights_daily_rows(previous_rows)
-    trends = _build_metric_trends(current["totals"], previous["totals"], _SOCIAL_INSIGHTS_SUM_KEYS)
+        current_rows = await _list_social_insights_daily(account["id"], since_date.isoformat(), until_date.isoformat())
+        previous_rows = await _list_social_insights_daily(account["id"], previous_since_date.isoformat(), (since_date - timedelta(days=1)).isoformat())
+
+        current = _aggregate_social_insights_daily_rows(current_rows)
+        previous = _aggregate_social_insights_daily_rows(previous_rows)
+        trends = _build_metric_trends(current["totals"], previous["totals"], _SOCIAL_INSIGHTS_SUM_KEYS)
 
     return {
         "supported": True,
@@ -20236,8 +20246,8 @@ async def get_social_insights(
     range: Annotated[str, Query()] = "30d",
 ):
     await _assert_user_can_access_analytics(user_id)
-    if range not in {"7d", "30d", "90d"}:
-        raise HTTPException(status_code=400, detail="range must be one of: 7d, 30d, 90d")
+    if range not in {"7d", "30d", "90d", "all"}:
+        raise HTTPException(status_code=400, detail="range must be one of: 7d, 30d, 90d, all")
     account = await _get_social_account_by_id(user_id, account_id)
     if not account:
         raise HTTPException(status_code=404, detail=_SOCIAL_ACCOUNT_NOT_FOUND)
@@ -20251,7 +20261,9 @@ async def get_social_insights(
             "daily": [],
         }
     else:
-        days = {"7d": 7, "30d": 30, "90d": 90}[range]
+        # None (for "all") means "every stored day, no lower bound" -- see
+        # _get_stored_social_insights_for_account.
+        days = {"7d": 7, "30d": 30, "90d": 90, "all": None}[range]
         result = await _get_stored_social_insights_for_account(account, days)
 
     return {

@@ -310,6 +310,21 @@ function AccountInsightsCard({ insights, loading, refreshing, refreshError, onRe
 
     if (!insights) return null;
 
+    // Structurally unsupported for this platform (a disabled feature toggle
+    // like TIKTOK_INSIGHTS_ENABLED, or a platform with no insights scope at
+    // all) -- no refresh button here, since POST /refresh would just 400
+    // for the same reason (see refresh_social_insights in app.py).
+    if (insights.supported === false) {
+        return (
+            <div className={`${CARD_CLASS} p-4 flex items-start gap-2`}>
+                <AlertTriangle size={16} className="text-slate-400 dark:text-zinc-500 mt-0.5 shrink-0" />
+                <p className="text-sm text-slate-500 dark:text-zinc-400">
+                    {t("dashboard.analyticsPlatformUnsupported", "Analytics are not available yet for this platform.")}
+                </p>
+            </div>
+        );
+    }
+
     const lastSyncedLabel = formatLastSynced(insights.last_synced_at, t);
 
     if (insights.error) {

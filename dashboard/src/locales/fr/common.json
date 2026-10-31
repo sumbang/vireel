@@ -683,6 +683,7 @@
     "analyticsEyebrow": "Réseaux sociaux",
     "analyticsLastSynced": "Mis à jour {time}",
     "analyticsNoAccount": "Connectez un réseau social dans Paramètres pour voir vos analyses.",
+    "analyticsPlatformUnsupported": "Les statistiques ne sont pas encore disponibles pour ce réseau.",
     "analyticsRefresh": "Actualiser",
     "analyticsRefreshCooldown": "Disponible dans {s}s",
     "analyticsRefreshFailed": "Actualisation impossible.",

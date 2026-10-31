@@ -683,6 +683,7 @@
     "analyticsEyebrow": "Social networks",
     "analyticsLastSynced": "Updated {time}",
     "analyticsNoAccount": "Connect a social network in Settings to see your analytics.",
+    "analyticsPlatformUnsupported": "Analytics are not available yet for this platform.",
     "analyticsRefresh": "Refresh",
     "analyticsRefreshCooldown": "Available in {s}s",
     "analyticsRefreshFailed": "Refresh failed.",

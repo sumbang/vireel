@@ -9,6 +9,7 @@ import { useTheme } from '../state/ThemeContext';
 import { useUserCredits } from '../state/UserCreditsContext';
 import ServiceUsage from "../components/ServiceUsage.jsx";
 import { API_BASE_URL, getApiUrl, fetchAppConfig } from '../config';
+import FacebookPageSelectModal from '../components/FacebookPageSelectModal';
 import { getAuthHeaders } from '../lib/apiAuth';
 import { useTranslation } from '../state/LanguageContext';
 
@@ -268,6 +269,10 @@ export default function SettingsPage() {
   const [maxSocialAccount, setMaxSocialAccount] = useState(0);
   const [openAccountMenuId, setOpenAccountMenuId] = useState(null);
   const [linkedinInfoOpen, setLinkedinInfoOpen] = useState(false);
+  // { pages, onSelect, onCancel } while the Facebook page picker is open
+  // (more than one manageable page was returned); null otherwise.
+  const [facebookPageSelection, setFacebookPageSelection] = useState(null);
+  const [facebookPageSelectionSubmitting, setFacebookPageSelectionSubmitting] = useState(false);
   // Mirrors the backend's LINKEDIN_INSIGHTS_ENABLED kill switch -- when ops
   // disable it, the "LinkedIn (Analytics)" card must disappear too, not
   // just have its /connect/linkedin_analytics calls 404.
@@ -839,37 +844,10 @@ export default function SettingsPage() {
     setTimeout(() => setCopiedId(false), 2000);
   };
 
-  const finalizeFacebookPageSelection = async (oauthPayload) => {
-    const selectionToken = oauthPayload?.selection_token;
-    const pages = Array.isArray(oauthPayload?.pages)
-      ? oauthPayload.pages.filter((page) => page?.page_id)
-      : [];
-
-    if (!selectionToken || pages.length === 0) {
-      throw new Error(t('settings.facebookPagesMissing', 'No Facebook page available for selection.'));
-    }
-
-    let selectedPage = pages[0];
-    if (pages.length > 1) {
-      const menu = pages
-        .map((page, index) => `${index + 1}. ${page.page_name || page.page_id}`)
-        .join('\n');
-      const rawChoice = window.prompt(
-        `${t('settings.selectFacebookPage', 'Select a Facebook page to connect:')}\n\n${menu}`,
-        '1',
-      );
-
-      if (rawChoice === null) {
-        throw new Error(t('settings.facebookSelectionCanceled', 'Facebook page selection canceled.'));
-      }
-
-      const selectedIndex = Number(rawChoice) - 1;
-      if (!Number.isInteger(selectedIndex) || selectedIndex < 0 || selectedIndex >= pages.length) {
-        throw new Error(t('settings.invalidFacebookPageSelection', 'Invalid Facebook page selection.'));
-      }
-      selectedPage = pages[selectedIndex];
-    }
-
+  // Pure request -- the page to connect is already decided by the caller
+  // (either the only page returned, or the one picked in
+  // FacebookPageSelectModal). Reused by both paths in processPayload below.
+  const submitFacebookPageSelection = async (selectionToken, pageId) => {
     const response = await fetch(getApiUrl('/api/auth/facebook/select-page'), {
       method: 'POST',
       headers: {
@@ -878,7 +856,7 @@ export default function SettingsPage() {
       },
       body: JSON.stringify({
         selection_token: selectionToken,
-        page_id: selectedPage.page_id,
+        page_id: pageId,
       }),
     });
 
@@ -956,9 +934,41 @@ export default function SettingsPage() {
             handled = true;
 
             if (data.type === 'oauth_page_selection') {
-                finalizeFacebookPageSelection(data)
-                    .then(() => finish(resolve))
-                    .catch((error) => finish(reject, error));
+                const selectionToken = data?.selection_token;
+                const pages = Array.isArray(data?.pages) ? data.pages.filter((page) => page?.page_id) : [];
+
+                if (!selectionToken || pages.length === 0) {
+                    finish(reject, new Error(t('settings.facebookPagesMissing', 'No Facebook page available for selection.')));
+                    return;
+                }
+
+                if (pages.length === 1) {
+                    submitFacebookPageSelection(selectionToken, pages[0].page_id)
+                        .then(() => finish(resolve))
+                        .catch((error) => finish(reject, error));
+                    return;
+                }
+
+                setFacebookPageSelection({
+                    pages,
+                    onSelect: async (pageId) => {
+                        setFacebookPageSelectionSubmitting(true);
+                        try {
+                            await submitFacebookPageSelection(selectionToken, pageId);
+                            setFacebookPageSelection(null);
+                            finish(resolve);
+                        } catch (error) {
+                            setFacebookPageSelection(null);
+                            finish(reject, error);
+                        } finally {
+                            setFacebookPageSelectionSubmitting(false);
+                        }
+                    },
+                    onCancel: () => {
+                        setFacebookPageSelection(null);
+                        finish(reject, new Error(t('settings.facebookSelectionCanceled', 'Facebook page selection canceled.')));
+                    },
+                });
                 return;
             }
             if (data.type === 'oauth_success') {
@@ -1861,6 +1871,15 @@ export default function SettingsPage() {
 
       {linkedinInfoOpen && (
         <LinkedinMultiAccountInfoModal onClose={() => setLinkedinInfoOpen(false)} t={t} />
+      )}
+
+      {facebookPageSelection && (
+        <FacebookPageSelectModal
+          pages={facebookPageSelection.pages}
+          onSelect={facebookPageSelection.onSelect}
+          onCancel={facebookPageSelection.onCancel}
+          isSubmitting={facebookPageSelectionSubmitting}
+        />
       )}
 
     </div>

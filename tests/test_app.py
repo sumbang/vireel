@@ -10161,6 +10161,54 @@ def test_get_social_insights_surfaces_stored_monetization_snapshot(monkeypatch):
     assert data["monetization"]["ad_impressions"] == 1000
 
 
+def test_get_social_insights_rejects_invalid_range(monkeypatch):
+    app = _import_app_with_stubs(monkeypatch)
+    monkeypatch.setattr(app, "_assert_user_can_access_analytics", AsyncMock())
+
+    with TestClient(app.app) as client:
+        resp = client.get(
+            "/api/social/insights", params={"account_id": "acct-1", "range": "1y"}, headers=_auth_headers("u1"),
+        )
+
+    assert resp.status_code == 400
+
+
+def test_get_social_insights_supports_all_range(monkeypatch):
+    # The dashboard's single range selector (7d/30d/90d/all) feeds this
+    # endpoint's `range` directly -- "all" must not 400 (it used to, which
+    # surfaced as a misleading "reconnect this account" error on the
+    # frontend for a range the account itself had nothing wrong with).
+    app = _import_app_with_stubs(monkeypatch)
+    monkeypatch.setattr(app, "_assert_user_can_access_analytics", AsyncMock())
+    monkeypatch.setattr(app, "_get_social_account_by_id", AsyncMock(return_value={
+        "id": "acct-1", "platform": "facebook", "platform_account_name": "My Page",
+        "last_insights_synced_at": "2026-10-10T08:00:00+00:00",
+    }))
+    captured_bounds = []
+
+    async def fake_list_social_insights_daily(social_account_id, since_date, until_date):
+        captured_bounds.append((since_date, until_date))
+        return [{"day": "2020-01-01", "metrics": {"impressions": 5}}]
+
+    monkeypatch.setattr(app, "_list_social_insights_daily", fake_list_social_insights_daily)
+
+    with TestClient(app.app) as client:
+        resp = client.get(
+            "/api/social/insights", params={"account_id": "acct-1", "range": "all"}, headers=_auth_headers("u1"),
+        )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["range"] == "all"
+    assert data["metrics"]["impressions"] == 5
+    # No well-defined "previous period" for an open-ended range.
+    assert data["trends"] == {}
+    # Only one lookup (no "previous period" comparison call) and no lower
+    # bound tighter than a far-past date.
+    assert len(captured_bounds) == 1
+    assert captured_bounds[0][0] == "2000-01-01"
+
+
 def test_aggregate_social_insights_daily_rows_sums_deltas_snapshots_followers(monkeypatch):
     app = _import_app_with_stubs(monkeypatch)
     rows = [
